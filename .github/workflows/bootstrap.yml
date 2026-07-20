@@ -7,6 +7,12 @@ on:
     paths:
       - '.bootstrap/**'
       - '.github/workflows/bootstrap.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.bootstrap/**'
+      - '.github/workflows/bootstrap.yml'
   workflow_dispatch:
 
 permissions:
@@ -20,6 +26,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: agent/bootstrap-cloud-portfolio
 
       - name: Reconstruct project
         shell: bash
@@ -44,4 +51,4 @@ jobs:
             exit 0
           fi
           git commit -m "feat: bootstrap cloud portfolio analyzer"
-          git push
+          git push origin HEAD:agent/bootstrap-cloud-portfolio
