@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { buildPortfolioAccounting, type PortfolioAccounting } from './lib/accounting'
 import { ApiError, api } from './lib/api'
 import { readCachedBootstrap, writeCachedBootstrap } from './lib/cache'
 import type { BootstrapResponse, DatasetDiff, DatasetUpload } from './lib/contracts'
@@ -8,6 +9,10 @@ import { PARSER_VERSION, parseTransactionFile, type ParseResult } from './lib/pa
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return '—'
   return new Intl.DateTimeFormat('zh-TW', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(`${value.replace(' ', 'T')}Z`))
+}
+
+function formatAmount(value: number): string {
+  return value.toLocaleString('zh-TW', { maximumFractionDigits: 2 })
 }
 
 function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
@@ -44,6 +49,90 @@ function DatasetTable({ data }: { data: BootstrapResponse }) {
       </table>
       {data.transactions.length > 100 && <p className="table-note">僅顯示前 100 筆，共 {data.transactions.length.toLocaleString()} 筆。</p>}
     </div>
+  )
+}
+
+function AccountingPanel({ accounting }: { accounting: PortfolioAccounting }) {
+  const openPositions = accounting.positions.filter((position) => Math.abs(position.quantity) > 1e-9)
+  return (
+    <section className="panel" id="accounting">
+      <div className="panel-heading">
+        <div>
+          <span>ACCOUNTING CORE · v0.1</span>
+          <h2>交易帳務摘要</h2>
+          <p>以移動平均成本法計算；各幣別分開呈現。尚未接入市場價格與匯率，因此這裡不是市值或投資報酬。</p>
+        </div>
+      </div>
+
+      <div className="metrics-grid">
+        <Metric label="證券交易筆數" value={accounting.securityTransactionCount.toLocaleString()} />
+        <Metric label="目前持有標的" value={openPositions.length.toLocaleString()} />
+        <Metric label="帳務幣別" value={accounting.currencies.length.toLocaleString()} />
+        <Metric label="阻擋型錯誤" value={accounting.blockingIssueCount.toLocaleString()} hint={accounting.blockingIssueCount > 0 ? '需修正交易資料' : '帳務序列可計算'} />
+      </div>
+
+      <div className="panel-heading">
+        <div><span>CURRENCY LEDGER</span><h2>各幣別證券現金流</h2><p>不同幣別不得直接相加；淨現金流負數代表買進支出大於賣出收入。</p></div>
+      </div>
+      {accounting.currencies.length === 0 ? <div className="empty-state">目前沒有可計算的證券交易。</div> : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr><th>幣別</th><th className="numeric">累計買入</th><th className="numeric">累計賣出</th><th className="numeric">費用</th><th className="numeric">淨證券現金流</th><th className="numeric">已實現損益</th></tr>
+            </thead>
+            <tbody>
+              {accounting.currencies.map((currency) => (
+                <tr key={currency.currency}>
+                  <td>{currency.currency}</td>
+                  <td className="numeric">{formatAmount(currency.grossBuys)}</td>
+                  <td className="numeric">{formatAmount(currency.grossSells)}</td>
+                  <td className="numeric">{formatAmount(currency.fees)}</td>
+                  <td className="numeric">{formatAmount(currency.netSecurityCashFlow)}</td>
+                  <td className="numeric">{formatAmount(currency.realizedPnl)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="panel-heading">
+        <div><span>POSITION LEDGER</span><h2>持倉與移動平均成本</h2><p>剩餘成本只保留尚未賣出的部位；已賣出成本會在成交當日釋放並計入已實現損益。</p></div>
+      </div>
+      {accounting.positions.length === 0 ? <div className="empty-state">目前沒有證券持倉紀錄。</div> : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr><th>標的</th><th>幣別</th><th className="numeric">目前股數</th><th className="numeric">平均單位成本</th><th className="numeric">剩餘成本</th><th className="numeric">已實現損益</th></tr>
+            </thead>
+            <tbody>
+              {accounting.positions.map((position) => (
+                <tr key={`${position.currency}-${position.ticker}`}>
+                  <td>{position.ticker}</td>
+                  <td>{position.currency}</td>
+                  <td className="numeric">{formatAmount(position.quantity)}</td>
+                  <td className="numeric">{formatAmount(position.averageUnitCost)}</td>
+                  <td className="numeric">{formatAmount(position.costBasis)}</td>
+                  <td className="numeric">{formatAmount(position.realizedPnl)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {accounting.issues.length > 0 && (
+        <div className="rejected-list">
+          <strong>{accounting.blockingIssueCount > 0 ? '帳務資料有阻擋型問題' : '帳務處理提醒'}</strong>
+          <ul>
+            {accounting.issues.slice(0, 10).map((issue) => (
+              <li key={`${issue.sourceRowNumber}-${issue.code}`}>第 {issue.sourceRowNumber} 列 · {issue.code}：{issue.message}</li>
+            ))}
+          </ul>
+          {accounting.issues.length > 10 && <small>另有 {accounting.issues.length - 10} 項未顯示。</small>}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -90,6 +179,11 @@ export default function App() {
     const tickers = new Set(rows.filter((row) => row.transactionType === 'SECURITY').map((row) => row.ticker))
     return { rows: rows.length, tickers: tickers.size }
   }, [bootstrap])
+
+  const accounting = useMemo(
+    () => buildPortfolioAccounting(bootstrap?.transactions ?? []),
+    [bootstrap],
+  )
 
   async function selectFile(file: File | null) {
     setError(''); setMessage(''); clearCandidate(); setPendingFile(file)
@@ -170,6 +264,7 @@ export default function App() {
         <div className="brand"><span>PA</span><div><strong>Portfolio Analyzer</strong><small>Cloud Ledger</small></div></div>
         <nav>
           <a className="active" href="#overview">投資組合總覽</a>
+          <a href="#accounting">交易帳務</a>
           <a href="#upload">交易資料更新</a>
           <a href="#transactions">交易明細</a>
           <a className="disabled" aria-disabled="true">策略比較 · 下一階段</a>
@@ -192,6 +287,8 @@ export default function App() {
           <Metric label="雲端版本" value={`v${bootstrap.cloudRevision}`} hint={active ? formatDateTime(active.activatedAt) : '尚未啟用'} />
           <Metric label="交易期間" value={active ? `${active.earliestDate} → ${active.latestDate}` : '—'} />
         </section>
+
+        <AccountingPanel accounting={accounting} />
 
         <section className="panel" id="upload">
           <div className="panel-heading"><div><span>DATASET UPDATE</span><h2>上傳新版交易明細</h2><p>新檔案先解析、驗證及比較；確認後才會取代 ACTIVE 版本，舊版保留為 ARCHIVED。</p></div></div>
