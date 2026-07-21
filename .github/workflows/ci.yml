@@ -17,3 +17,12 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+      - name: Validate staging config renderer
+        env:
+          CLOUDFLARE_D1_DATABASE_ID: 00000000-0000-0000-0000-000000000001
+          CLOUDFLARE_D1_DATABASE_NAME: portfolio-analyzer-staging
+          CLOUDFLARE_WORKER_NAME: portfolio-analyzer-staging
+        run: |
+          node scripts/render-wrangler-config.mjs
+          node -e "const c=require('./.wrangler.staging.generated.jsonc'); if(c.name!=='portfolio-analyzer-staging'||c.d1_databases[0].database_id!==process.env.CLOUDFLARE_D1_DATABASE_ID||c.vars?.AUTH_MODE==='dev') process.exit(1)"
+          rm .wrangler.staging.generated.jsonc
