@@ -1,40 +1,100 @@
 # Portfolio Analyzer Cloud
 
-Cloud-first personal portfolio analytics project using React, TypeScript, Cloudflare Workers and D1.
+個人投資交易明細的跨瀏覽器雲端版本管理與分析工具。
 
-## Current vertical slice
+本專案採用 **Cloud-canonical, Local-cached**：
 
-- Upload a transaction CSV once.
-- Store the canonical ACTIVE dataset in Cloudflare D1.
-- Restore the same dataset from another browser after signing in through Cloudflare Access.
-- Protect updates with a cloud revision to prevent stale browsers from overwriting newer data.
-- Keep archived dataset versions instead of deleting the previous ACTIVE version first.
+- Cloudflare D1 的 `ACTIVE Dataset` 是跨裝置正式版本。
+- 每個瀏覽器以 IndexedDB 保存最近一次成功同步的離線快取。
+- 新上傳檔案必須先解析、驗證與比較，確認後才啟用。
+- 舊的 ACTIVE 版本會轉成 ARCHIVED，不會先刪除再寫入。
+- `baseRevision` 防止兩台裝置互相覆蓋。
 
-## Stack
+## 已完成範圍
 
-- React + Vite + TypeScript
-- Cloudflare Worker + Hono
-- Cloudflare D1
-- Cloudflare Access identity header
+### Cloud vertical slice
 
-## Local setup
+- React + Vite + TypeScript 使用者介面
+- Cloudflare Worker + Hono API
+- Cloudflare Access 身分標頭驗證；本機可使用 dev identity
+- D1 migration：使用者、資料集版本、交易、設定、同步 revision
+- Excel / CSV 瀏覽器端解析
+- 新舊資料 hash 比較
+- `PENDING → ACTIVE → ARCHIVED` 資料版本流程
+- 409 revision conflict 防護
+- IndexedDB 離線快取與跨瀏覽器雲端還原
+- 拒收列不得啟用
+
+### Python reference engine fixes（下一批推送）
+
+`reference/python` 保留原始 Python 財務引擎作為正確性基準，已修正：
+
+- 一次性投入本金重複及基準不一致
+- 台幣現金未優先支應外幣證券買進
+- 外幣出金未按出金日匯率認列
+- 超賣、超額換回及超額出金只被截斷
+- DCA／一次性投入在非交易日錯用前一日價格
+- 鏡像策略未一致使用市場匯率 fallback
+- 市場價格混用 adjusted/raw basis
+
+### MDD reference fixes（下一批推送）
+
+`reference/mdd` 已加入獨立 `mdd_engine.py`：
+
+- 每日資料改名為 Current Drawdown from Historical Peak
+- 年度最小值才稱為 Maximum Drawdown
+- 分位數只使用實際交易日，不再以前向填值加入週末
+- 價格 basis 明確指定 raw Close；另保留 adjusted proxy 選項
+- 深度回撤不再直接描述成買進訊號
+
+## 專案結構
+
+```text
+portfolio-analyzer-cloud/
+├─ src/                    React UI、parser、IndexedDB、shared contracts
+├─ worker/                 Hono API、Access auth、D1 repository
+├─ migrations/             D1 schema
+├─ tests/                  TypeScript tests
+├─ reference/python/       修正後 Python 投資組合引擎
+├─ reference/mdd/          修正後 MDD reference app/engine
+├─ docs/                   架構、帳務政策、部署與 roadmap
+└─ .github/workflows/      CI
+```
+
+## 本機啟動
+
+1. 安裝 Node.js 22 與 Python 3.11+。
+2. 複製本機身分設定：
+
+```bash
+cp .dev.vars.example .dev.vars
+```
+
+3. 建立本機 D1 並執行 migration：
 
 ```bash
 npm install
-npx wrangler d1 migrations apply DB --local
+npm run db:migrate:local
 npm run dev
 ```
 
-For local authentication, configure `AUTH_MODE=dev` and `DEV_USER_EMAIL` in `.dev.vars`. Never enable development auth in production.
+## 測試
 
-## Deployment prerequisites
+```bash
+npm test
+npm run typecheck
+npm run build
 
-1. Create a Cloudflare D1 database named `portfolio-analyzer`.
-2. Replace `REPLACE_WITH_D1_DATABASE_ID` in `wrangler.jsonc`.
-3. Apply the migration remotely.
-4. Put the Worker hostname behind Cloudflare Access.
-5. Run `npm run build && npx wrangler deploy`.
+python -m pytest reference/python/tests -q
+python -m pytest reference/mdd/tests -q
+```
 
-## Development status
+## 部署前必要設定
 
-The first pull request establishes the cross-browser cloud persistence layer. The corrected Python portfolio engine and MDD reference engine remain the calculation baseline and will be imported in the next commit series with their regression tests.
+1. 建立 Cloudflare D1 database。
+2. 將 `wrangler.jsonc` 的 `database_id` 換成實際 ID。
+3. 將網站放在 Cloudflare Access 後方，只允許指定 Email。
+4. 不要在正式環境設定 `AUTH_MODE=dev`。
+5. 執行 remote migration 後再 deploy。
+
+詳見 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。

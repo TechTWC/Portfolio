@@ -1,4 +1,5 @@
 name: CI
+
 on:
   pull_request:
   push:
@@ -12,29 +13,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install dependencies
-        run: npm install
-      - name: Upload dependency lockfile
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: package-lock
-          path: package-lock.json
-          if-no-files-found: error
-          retention-days: 3
-      - name: Typecheck
-        id: typecheck
-        shell: bash
-        run: |
-          set -o pipefail
-          npm run typecheck 2>&1 | tee typecheck.log
-      - name: Upload typecheck diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: typecheck-log
-          path: typecheck.log
-          if-no-files-found: ignore
-          retention-days: 3
-      - name: Build
-        run: npm run build
+      - run: npm install
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build

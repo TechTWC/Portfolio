@@ -1,0 +1,2 @@
+AUTH_MODE=dev
+DEV_USER_EMAIL=local@example.com

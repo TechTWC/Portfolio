@@ -1,18 +1,74 @@
 import { Hono } from 'hono'
+import { datasetUploadSchema } from '../src/lib/contracts'
+import { compareTransactionSets } from '../src/lib/diff'
+import { requireUser, type Bindings, type Variables } from './auth'
+import { activateDataset, currentRevision, getActiveTransactions, getBootstrap } from './repository'
 
-type Env={DB:D1Database;AUTH_MODE?:string;DEV_USER_EMAIL?:string}
-type Variables={email:string;userId:string}
-type Tx={tradeDate:string;transactionType:string;ticker:string;currency:string;quantity:number;price:number;amountForeign:number}
+const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 
-const app=new Hono<{Bindings:Env;Variables:Variables}>()
-const id=()=>crypto.randomUUID()
-const userKey=async(email:string)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(email.toLowerCase())))).map(x=>x.toString(16).padStart(2,'0')).join('')
+app.get('/api/health', (c) => c.json({ ok: true, service: 'portfolio-analyzer-cloud' }))
+app.use('/api/*', requireUser)
 
-app.use('/api/*',async(c,next)=>{const email=c.req.header('Cf-Access-Authenticated-User-Email')||(c.env.AUTH_MODE==='dev'?c.env.DEV_USER_EMAIL:undefined);if(!email)return c.json({error:'UNAUTHORIZED'},401);c.set('email',email.toLowerCase());c.set('userId',await userKey(email));await next()})
+app.get('/api/bootstrap', async (c) => {
+  return c.json(await getBootstrap(c.env.DB, c.get('user')))
+})
 
-app.get('/api/health',c=>c.json({ok:true}))
-app.get('/api/bootstrap',async c=>{const userId=c.get('userId');const state=await c.env.DB.prepare('SELECT cloud_revision,active_dataset_id FROM portfolio_state WHERE user_id=?').bind(userId).first<{cloud_revision:number;active_dataset_id:string|null}>();if(!state?.active_dataset_id)return c.json({revision:state?.cloud_revision??0,dataset:null});const dataset=await c.env.DB.prepare('SELECT id,filename,row_count FROM portfolio_datasets WHERE id=? AND user_id=?').bind(state.active_dataset_id,userId).first<{id:string;filename:string;row_count:number}>();const rows=await c.env.DB.prepare('SELECT trade_date,transaction_type,ticker,currency,quantity,price,amount_foreign FROM transactions WHERE dataset_id=? ORDER BY trade_date,source_row_number').bind(state.active_dataset_id).all();return c.json({revision:state.cloud_revision,dataset:dataset?{id:dataset.id,filename:dataset.filename,rowCount:dataset.row_count,transactions:rows.results.map((r:any)=>({tradeDate:r.trade_date,transactionType:r.transaction_type,ticker:r.ticker,currency:r.currency,quantity:r.quantity,price:r.price,amountForeign:r.amount_foreign}))}:null})})
+app.post('/api/datasets/preview', async (c) => {
+  const parsed = datasetUploadSchema.safeParse(await c.req.json().catch(() => null))
+  if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? '資料格式錯誤' }, 400)
 
-app.post('/api/datasets',async c=>{const body=await c.req.json<{filename:string;baseRevision:number;transactions:Tx[]}>();if(!body.filename||!Array.isArray(body.transactions)||!body.transactions.length)return c.json({error:'INVALID_DATASET'},400);const userId=c.get('userId'),email=c.get('email');const state=await c.env.DB.prepare('SELECT cloud_revision FROM portfolio_state WHERE user_id=?').bind(userId).first<{cloud_revision:number}>();const current=state?.cloud_revision??0;if(body.baseRevision!==current)return c.json({error:'VERSION_CONFLICT',cloudRevision:current},409);const datasetId=id(),next=current+1;const statements=[c.env.DB.prepare('INSERT OR IGNORE INTO users(id,email) VALUES(?,?)').bind(userId,email),c.env.DB.prepare('INSERT OR IGNORE INTO portfolio_state(user_id,cloud_revision) VALUES(?,0)').bind(userId),c.env.DB.prepare("UPDATE portfolio_datasets SET status='ARCHIVED' WHERE user_id=? AND status='ACTIVE'").bind(userId),c.env.DB.prepare("INSERT INTO portfolio_datasets(id,user_id,revision,status,filename,file_hash,parser_version,row_count,validation_json,activated_at) VALUES(?,?,?,'ACTIVE',?,'browser','csv-v1',?,'{}',datetime('now'))").bind(datasetId,userId,next,body.filename,body.transactions.length)];body.transactions.forEach((tx,index)=>statements.push(c.env.DB.prepare('INSERT INTO transactions(id,dataset_id,user_id,source_row_number,trade_date,transaction_type,ticker,currency,quantity,price,amount_foreign,row_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').bind(id(),datasetId,userId,index+1,tx.tradeDate,tx.transactionType,tx.ticker??'',tx.currency,tx.quantity??0,tx.price??0,tx.amountForeign??0,`${datasetId}-${index+1}`)));statements.push(c.env.DB.prepare('UPDATE portfolio_state SET active_dataset_id=?,cloud_revision=?,updated_at=datetime(\'now\') WHERE user_id=? AND cloud_revision=?').bind(datasetId,next,userId,current));const result=await c.env.DB.batch(statements);const last=result[result.length-1];if(!last.success||last.meta.changes!==1)return c.json({error:'VERSION_CONFLICT'},409);return c.json({datasetId,revision:next},201)})
+  const user = c.get('user')
+  const revision = await currentRevision(c.env.DB, user.id)
+  if (revision !== parsed.data.baseRevision) {
+    return c.json({ error: '雲端資料已更新，請先重新載入最新版本', code: 'VERSION_CONFLICT' }, 409)
+  }
+
+  const oldRows = await getActiveTransactions(c.env.DB, user.id)
+  const diff = compareTransactionSets(oldRows, parsed.data.transactions)
+  const warnings: string[] = []
+  if (parsed.data.rejectedRowCount > 0) {
+    warnings.push(`新檔案有 ${parsed.data.rejectedRowCount} 列未通過驗證，修正前不能啟用`)
+  }
+  const duplicateCount = parsed.data.transactions.length - new Set(parsed.data.transactions.map((row) => row.rowHash)).size
+  if (duplicateCount > 0) warnings.push(`新檔案包含 ${duplicateCount} 筆重複交易，無法啟用`)
+  if (parsed.data.transactions.some((row) => row.currency !== 'TWD' && row.fxRate === null)) {
+    warnings.push('部分外幣交易缺少輸入匯率，財務引擎將需要市場匯率 fallback')
+  }
+  return c.json({ diff, warnings })
+})
+
+app.post('/api/datasets/activate', async (c) => {
+  const parsed = datasetUploadSchema.safeParse(await c.req.json().catch(() => null))
+  if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? '資料格式錯誤' }, 400)
+
+  const user = c.get('user')
+  const revision = await currentRevision(c.env.DB, user.id)
+  if (revision !== parsed.data.baseRevision) {
+    return c.json({ error: '雲端資料已更新，請先重新載入最新版本', code: 'VERSION_CONFLICT' }, 409)
+  }
+  if (parsed.data.rejectedRowCount > 0) {
+    return c.json({ error: `新檔案有 ${parsed.data.rejectedRowCount} 列未通過驗證，不能啟用` }, 400)
+  }
+  if (parsed.data.sourceRowCount !== parsed.data.transactions.length) {
+    return c.json({ error: '來源列數與通過驗證的交易筆數不一致' }, 400)
+  }
+  const duplicateCount = parsed.data.transactions.length - new Set(parsed.data.transactions.map((row) => row.rowHash)).size
+  if (duplicateCount > 0) return c.json({ error: `資料包含 ${duplicateCount} 個重複 rowHash` }, 400)
+
+  try {
+    await activateDataset(c.env.DB, user, parsed.data, { duplicateCount })
+  } catch (error) {
+    if (error instanceof Error && (error.message.includes('UNIQUE') || error.message === 'VERSION_CONFLICT')) {
+      return c.json({ error: '資料版本衝突或此檔案已上傳，請重新載入', code: 'VERSION_CONFLICT' }, 409)
+    }
+    throw error
+  }
+  return c.json(await getBootstrap(c.env.DB, user), 201)
+})
+
+app.onError((error, c) => {
+  console.error(error)
+  return c.json({ error: '伺服器處理失敗，舊的 ACTIVE 交易資料未被覆蓋' }, 500)
+})
 
 export default app
