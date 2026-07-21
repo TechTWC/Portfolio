@@ -4,13 +4,17 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 
 const workflow = readFileSync('.github/workflows/deploy-staging.yml', 'utf8')
+const resolver = readFileSync('scripts/resolve-access.mjs', 'utf8')
 const renderer = readFileSync('scripts/render-wrangler-config.mjs', 'utf8')
 const auth = readFileSync('worker/auth.ts', 'utf8')
 
 describe('Cloudflare Access JWT hardening configuration', () => {
-  it('requires the staging audience secret before deployment', () => {
-    expect(workflow).toContain('CLOUDFLARE_ACCESS_AUD: ${{ secrets.CLOUDFLARE_ACCESS_AUD }}')
-    expect(workflow).toContain('Missing CLOUDFLARE_ACCESS_AUD')
+  it('resolves the Access audience from the Cloudflare API during deployment', () => {
+    expect(workflow).toContain('Resolve Cloudflare Access audience')
+    expect(workflow).toContain('node scripts/resolve-access.mjs')
+    expect(workflow).toContain('CLOUDFLARE_ACCESS_AUD: ${{ steps.access.outputs.access_aud }}')
+    expect(resolver).toContain('/access/apps')
+    expect(resolver).toContain('access_aud=')
   })
 
   it('injects access mode, audience and team domain into generated config', () => {
