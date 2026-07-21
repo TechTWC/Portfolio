@@ -15,7 +15,19 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm test
-      - run: npm run typecheck
+      - name: Typecheck
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee typecheck.log
+      - name: Upload TypeScript diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: typecheck-log
+          path: typecheck.log
+          if-no-files-found: ignore
+          retention-days: 3
       - run: npm run build
       - name: Validate staging config renderer
         env:
