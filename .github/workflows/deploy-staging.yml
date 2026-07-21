@@ -71,19 +71,24 @@ jobs:
           test -n "$DEPLOYMENT_URL" || (echo "Could not find the workers.dev URL in deploy output" && exit 1)
           echo "deployment-url=$DEPLOYMENT_URL" >> "$GITHUB_OUTPUT"
 
+      - name: Smoke test deployed Worker
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/smoke-test.mjs "$DEPLOYMENT_URL" 2>&1 | tee smoke-test.log
+
       - name: Upload deployment diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: staging-deploy-log
-          path: deploy.log
+          name: staging-deploy-diagnostics
+          path: |
+            deploy.log
+            smoke-test.log
           if-no-files-found: ignore
           retention-days: 3
-
-      - name: Smoke test deployed Worker
-        env:
-          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
-        run: node scripts/smoke-test.mjs "$DEPLOYMENT_URL"
 
       - name: Deployment summary
         env:
