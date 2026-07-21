@@ -59,7 +59,7 @@ describe('portfolio accounting core', () => {
       grossBuys: 22_000,
       grossSells: 6_500,
       fees: 50,
-      netSecurityCashFlow: -15_540,
+      netSecurityCashFlow: -15_550,
       realizedPnl: 980,
     })
   })
