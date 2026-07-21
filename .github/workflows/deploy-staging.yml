@@ -63,12 +63,22 @@ jobs:
 
       - name: Deploy staging Worker
         id: deploy
-        uses: cloudflare/wrangler-action@v3
+        shell: bash
+        run: |
+          set -o pipefail
+          npx wrangler deploy --config .wrangler.staging.generated.jsonc 2>&1 | tee deploy.log
+          DEPLOYMENT_URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' deploy.log | tail -n 1)"
+          test -n "$DEPLOYMENT_URL" || (echo "Could not find the workers.dev URL in deploy output" && exit 1)
+          echo "deployment-url=$DEPLOYMENT_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Upload deployment diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy --config .wrangler.staging.generated.jsonc
-          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          name: staging-deploy-log
+          path: deploy.log
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Smoke test deployed Worker
         env:
