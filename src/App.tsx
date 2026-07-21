@@ -57,6 +57,12 @@ export default function App() {
   const [message, setMessage] = useState<string>('')
   const [error, setError] = useState<string>('')
 
+  function clearCandidate() {
+    setParseResult(null)
+    setPendingFile(null)
+    setDiff(null)
+  }
+
   async function loadCloud(allowCacheFallback = true) {
     setError('')
     try {
@@ -86,7 +92,7 @@ export default function App() {
   }, [bootstrap])
 
   async function selectFile(file: File | null) {
-    setError(''); setMessage(''); setParseResult(null); setDiff(null); setPendingFile(file)
+    setError(''); setMessage(''); clearCandidate(); setPendingFile(file)
     if (!file || !bootstrap) return
     setBusy(true)
     try {
@@ -111,7 +117,12 @@ export default function App() {
         setMessage('離線狀態只能預覽，恢復連線後才能啟用新版本。')
       }
     } catch (parseError) {
-      setError(parseError instanceof Error ? parseError.message : String(parseError))
+      if (parseError instanceof ApiError && parseError.code === 'VERSION_CONFLICT') {
+        clearCandidate()
+        setError('雲端資料已更新，候選版本已清除。請先按「重新同步」，再重新選擇檔案。')
+      } else {
+        setError(parseError instanceof Error ? parseError.message : String(parseError))
+      }
     } finally {
       setBusy(false)
     }
@@ -133,12 +144,12 @@ export default function App() {
       const updated = await api.activate(payload)
       setBootstrap(updated)
       await writeCachedBootstrap(updated)
-      setParseResult(null); setPendingFile(null); setDiff(null); setOffline(false)
+      clearCandidate(); setOffline(false)
       setMessage(`已啟用資料版本 v${updated.cloudRevision}，其他瀏覽器登入後會取得相同 ACTIVE 版本。`)
     } catch (activateError) {
       if (activateError instanceof ApiError && activateError.code === 'VERSION_CONFLICT') {
         await loadCloud(false)
-        setParseResult(null); setPendingFile(null); setDiff(null)
+        clearCandidate()
         setError('其他瀏覽器已更新雲端資料。系統已載入最新版，請重新選擇檔案比較。')
       } else {
         setError(activateError instanceof Error ? activateError.message : String(activateError))
@@ -198,7 +209,7 @@ export default function App() {
               <div className="diff-card negative"><span>刪除／變更</span><strong>-{diff.removed.toLocaleString()}</strong></div>
               <div className="diff-card"><span>拒收列</span><strong>{parseResult.rejected.length.toLocaleString()}</strong></div>
               <div className="preview-actions">
-                <button className="secondary" onClick={() => { setParseResult(null); setPendingFile(null); setDiff(null) }} disabled={busy}>取消</button>
+                <button className="secondary" onClick={clearCandidate} disabled={busy}>取消</button>
                 <button className="primary" onClick={() => void activate()} disabled={busy || offline || diff.unchanged || parseResult.rejected.length > 0}>確認啟用新版</button>
               </div>
             </div>
