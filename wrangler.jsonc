@@ -3,6 +3,7 @@
   "name": "portfolio-analyzer-cloud",
   "main": "worker/index.ts",
   "compatibility_date": "2026-07-20",
+  "preview_urls": false,
   "assets": {
     "directory": "./dist/client",
     "not_found_handling": "single-page-application",
