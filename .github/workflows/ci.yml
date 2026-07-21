@@ -24,5 +24,5 @@ jobs:
           CLOUDFLARE_WORKER_NAME: portfolio-analyzer-staging
         run: |
           node scripts/render-wrangler-config.mjs
-          node -e "const c=require('./.wrangler.staging.generated.jsonc'); if(c.name!=='portfolio-analyzer-staging'||c.d1_databases[0].database_id!==process.env.CLOUDFLARE_D1_DATABASE_ID||c.vars?.AUTH_MODE==='dev') process.exit(1)"
+          node --input-type=module -e "import { readFileSync } from 'node:fs'; const c=JSON.parse(readFileSync('.wrangler.staging.generated.jsonc','utf8')); if(c.name!=='portfolio-analyzer-staging'||c.d1_databases[0].database_id!==process.env.CLOUDFLARE_D1_DATABASE_ID||c.vars?.AUTH_MODE==='dev') process.exit(1)"
           rm .wrangler.staging.generated.jsonc
