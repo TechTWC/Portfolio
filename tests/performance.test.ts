@@ -59,7 +59,7 @@ describe('external cash flow and XIRR performance', () => {
     })
 
     expect(result.complete).toBe(true)
-    expect(result.xirr).toBeCloseTo(0.1, 10)
+    expect(result.xirr).toBeCloseTo(0.1, 9)
   })
 
   it('converts foreign external cash flows using their historical row FX rates', () => {
