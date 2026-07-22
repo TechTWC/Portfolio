@@ -1,4 +1,5 @@
 import type { BootstrapResponse, DatasetDiff, DatasetUpload } from './contracts'
+import type { DatasetActivationGate } from './dataset-gate'
 
 export class ApiError extends Error {
   constructor(
@@ -24,7 +25,7 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 export const api = {
   bootstrap: () => requestJson<BootstrapResponse>('/api/bootstrap'),
   preview: (payload: DatasetUpload) =>
-    requestJson<{ diff: DatasetDiff; warnings: string[] }>('/api/datasets/preview', {
+    requestJson<{ diff: DatasetDiff; warnings: string[]; activationGate: DatasetActivationGate }>('/api/datasets/preview', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
