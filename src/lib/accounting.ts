@@ -2,7 +2,7 @@ import type { NormalizedTransaction } from './contracts'
 
 const EPSILON = 1e-9
 
-export type AccountingIssueCode = 'OVERSELL' | 'CURRENCY_MISMATCH' | 'DEFERRED_TRANSACTION_TYPE'
+export type AccountingIssueCode = 'OVERSELL' | 'CURRENCY_MISMATCH'
 
 export type AccountingIssue = {
   code: AccountingIssueCode
@@ -93,16 +93,10 @@ export function buildPortfolioAccounting(transactions: NormalizedTransaction[]):
 
   for (const row of ordered) {
     if (row.transactionType !== 'SECURITY') {
+      // CASH and FX rows are handled by cash-ledger v0.2. The security
+      // accounting module deliberately ignores them without producing a stale
+      // warning that would contradict the dedicated cash-funding panel.
       deferredTransactionCount += 1
-      issues.push({
-        code: 'DEFERRED_TRANSACTION_TYPE',
-        severity: 'WARNING',
-        sourceRowNumber: row.sourceRowNumber,
-        tradeDate: row.tradeDate,
-        ticker: row.ticker,
-        currency: row.currency,
-        message: `交易類型 ${row.transactionType} 將在外幣與現金帳務階段處理`,
-      })
       continue
     }
 
