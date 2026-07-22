@@ -278,7 +278,7 @@ export function buildCurrentPerformance(input: CurrentPerformanceInput): Current
     })
   }
 
-  if (flows.length >= 2 && flows[0].date === flows[flows.length - 1].date) {
+  if (events.length >= 2 && events[0].date === events[events.length - 1].date) {
     issues.push({
       code: 'ZERO_TIME_SPAN',
       severity: 'BLOCKING',
