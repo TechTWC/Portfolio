@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { buildPortfolioAccounting, type PortfolioAccounting } from './lib/accounting'
 import { ApiError, api } from './lib/api'
 import { readCachedBootstrap, writeCachedBootstrap } from './lib/cache'
+import { buildCashFundingLedger, type CashLedgerResult } from './lib/cash-ledger'
 import type { BootstrapResponse, DatasetDiff, DatasetUpload } from './lib/contracts'
 import { compareTransactionSets } from './lib/diff'
 import { PARSER_VERSION, parseTransactionFile, type ParseResult } from './lib/parser'
@@ -136,6 +137,96 @@ function AccountingPanel({ accounting }: { accounting: PortfolioAccounting }) {
   )
 }
 
+function CashFundingPanel({ ledger }: { ledger: CashLedgerResult }) {
+  return (
+    <section className="panel" id="cash-funding">
+      <div className="panel-heading">
+        <div>
+          <span>CASH & FX FUNDING · v0.2</span>
+          <h2>現金與換匯資金核對</h2>
+          <p>核對入金、出金、換匯及證券買賣是否有足夠現金。這裡尚未計算匯兌損益、市值或投資報酬。</p>
+        </div>
+      </div>
+
+      <div className="metrics-grid">
+        <Metric label="追蹤模式" value={ledger.trackingMode} hint={ledger.trackingMode === 'UNTRACKED' ? '檔案沒有入金、出金或換匯列' : '已逐筆核對資金餘額'} />
+        <Metric label="現金幣別" value={ledger.wallets.length.toLocaleString()} />
+        <Metric label="資金阻擋錯誤" value={ledger.blockingIssueCount.toLocaleString()} hint={ledger.blockingIssueCount > 0 ? '不可忽略或截斷' : ledger.trackingMode === 'TRACKED' ? '現金序列可核對' : '尚未啟用嚴格核對'} />
+        <Metric label="自動換匯" value={ledger.wallets.some((wallet) => wallet.autoFundedIn > 0 || wallet.autoFundingOut > 0) ? '有' : '無'} />
+      </div>
+
+      {ledger.trackingMode === 'UNTRACKED' ? (
+        <div className="empty-state">
+          目前 ACTIVE Dataset 只有證券交易，系統不假設起始現金，因此不會誤報資金不足。加入 CASH_IN、CASH_OUT、FX_BUY 或 FX_SELL 後，會自動切換為 TRACKED 嚴格核對。
+        </div>
+      ) : (
+        <>
+          <div className="panel-heading">
+            <div>
+              <span>NATIVE-CURRENCY WALLET</span>
+              <h2>各幣別現金帳</h2>
+              <p>SECURITY／CASH 費用以該列幣別計；FX_BUY／FX_SELL 費用以 TWD 計。不同幣別不得直接相加。</p>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>幣別</th>
+                  <th className="numeric">入金</th>
+                  <th className="numeric">出金</th>
+                  <th className="numeric">換匯流入</th>
+                  <th className="numeric">換匯流出</th>
+                  <th className="numeric">自動換匯流入</th>
+                  <th className="numeric">自動換匯流出</th>
+                  <th className="numeric">證券支出</th>
+                  <th className="numeric">證券收入</th>
+                  <th className="numeric">費用</th>
+                  <th className="numeric">期末現金</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ledger.wallets.map((wallet) => (
+                  <tr key={wallet.currency}>
+                    <td>{wallet.currency}</td>
+                    <td className="numeric">{formatAmount(wallet.deposits)}</td>
+                    <td className="numeric">{formatAmount(wallet.withdrawals)}</td>
+                    <td className="numeric">{formatAmount(wallet.explicitFxIn)}</td>
+                    <td className="numeric">{formatAmount(wallet.explicitFxOut)}</td>
+                    <td className="numeric">{formatAmount(wallet.autoFundedIn)}</td>
+                    <td className="numeric">{formatAmount(wallet.autoFundingOut)}</td>
+                    <td className="numeric">{formatAmount(wallet.securitySpent)}</td>
+                    <td className="numeric">{formatAmount(wallet.securityReceived)}</td>
+                    <td className="numeric">{formatAmount(wallet.fees)}</td>
+                    <td className="numeric">{formatAmount(wallet.endingBalance)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {ledger.issues.length > 0 && (
+        <div className="rejected-list">
+          <strong>現金或換匯資料有阻擋型問題</strong>
+          <ul>
+            {ledger.issues.slice(0, 10).map((issue) => (
+              <li key={`${issue.sourceRowNumber}-${issue.code}`}>
+                第 {issue.sourceRowNumber} 列 · {issue.code}：{issue.message}
+                {issue.required !== undefined && issue.available !== undefined
+                  ? `（需要 ${formatAmount(issue.required)}，可用 ${formatAmount(issue.available)}）`
+                  : ''}
+              </li>
+            ))}
+          </ul>
+          {ledger.issues.length > 10 && <small>另有 {ledger.issues.length - 10} 項未顯示。</small>}
+        </div>
+      )}
+    </section>
+  )
+}
+
 export default function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null)
   const [parseResult, setParseResult] = useState<ParseResult | null>(null)
@@ -182,6 +273,11 @@ export default function App() {
 
   const accounting = useMemo(
     () => buildPortfolioAccounting(bootstrap?.transactions ?? []),
+    [bootstrap],
+  )
+
+  const cashLedger = useMemo(
+    () => buildCashFundingLedger(bootstrap?.transactions ?? []),
     [bootstrap],
   )
 
@@ -265,6 +361,7 @@ export default function App() {
         <nav>
           <a className="active" href="#overview">投資組合總覽</a>
           <a href="#accounting">交易帳務</a>
+          <a href="#cash-funding">現金與換匯</a>
           <a href="#upload">交易資料更新</a>
           <a href="#transactions">交易明細</a>
           <a className="disabled" aria-disabled="true">策略比較 · 下一階段</a>
@@ -289,6 +386,7 @@ export default function App() {
         </section>
 
         <AccountingPanel accounting={accounting} />
+        <CashFundingPanel ledger={cashLedger} />
 
         <section className="panel" id="upload">
           <div className="panel-heading"><div><span>DATASET UPDATE</span><h2>上傳新版交易明細</h2><p>新檔案先解析、驗證及比較；確認後才會取代 ACTIVE 版本，舊版保留為 ARCHIVED。</p></div></div>
