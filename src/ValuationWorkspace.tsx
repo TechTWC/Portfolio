@@ -1,0 +1,257 @@
+import { useEffect, useState } from 'react'
+import { ApiError, api } from './lib/api'
+import type {
+  ValuationBootstrapResponse,
+  ValuationPreviewResponse,
+  ValuationSnapshotUpload,
+} from './lib/valuation-contracts'
+import {
+  parseValuationFile,
+  VALUATION_PARSER_VERSION,
+  type ValuationParseResult,
+} from './lib/valuation-parser'
+
+function formatAmount(value: number | null): string {
+  if (value === null) return '—'
+  return value.toLocaleString('zh-TW', { maximumFractionDigits: 2 })
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return '—'
+  return new Intl.DateTimeFormat('zh-TW', { dateStyle: 'medium', timeStyle: 'short' })
+    .format(new Date(`${value.replace(' ', 'T')}Z`))
+}
+
+function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <article className="metric-card">
+      <p>{label}</p>
+      <strong>{value}</strong>
+      {hint && <small>{hint}</small>}
+    </article>
+  )
+}
+
+export default function ValuationWorkspace() {
+  const [bootstrap, setBootstrap] = useState<ValuationBootstrapResponse | null>(null)
+  const [parseResult, setParseResult] = useState<ValuationParseResult | null>(null)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [preview, setPreview] = useState<ValuationPreviewResponse | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  function clearCandidate() {
+    setParseResult(null)
+    setPendingFile(null)
+    setPreview(null)
+  }
+
+  async function loadValuation() {
+    setError('')
+    try {
+      setBootstrap(await api.valuationBootstrap())
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : String(loadError))
+    }
+  }
+
+  useEffect(() => { void loadValuation() }, [])
+
+  async function selectValuationFile(file: File | null) {
+    setError(''); setMessage(''); clearCandidate(); setPendingFile(file)
+    if (!file || !bootstrap) return
+    setBusy(true)
+    try {
+      const result = await parseValuationFile(file)
+      const payload: ValuationSnapshotUpload = {
+        baseRevision: bootstrap.valuationRevision,
+        valuationDate: result.valuationDate,
+        filename: file.name,
+        fileHash: result.fileHash,
+        parserVersion: VALUATION_PARSER_VERSION,
+        sourceRowCount: result.sourceRowCount,
+        rejectedRowCount: result.rejected.length,
+        marks: result.marks,
+      }
+      const cloudPreview = await api.valuationPreview(payload)
+      setParseResult(result)
+      setPreview(cloudPreview)
+      setMessage([...result.warnings, ...cloudPreview.warnings].join('；'))
+    } catch (previewError) {
+      if (previewError instanceof ApiError && previewError.code === 'VALUATION_VERSION_CONFLICT') {
+        await loadValuation()
+        clearCandidate()
+        setError('雲端估值版本已更新，候選資料已清除。請重新選擇估值檔。')
+      } else {
+        setError(previewError instanceof Error ? previewError.message : String(previewError))
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function activateValuation() {
+    if (!bootstrap || !parseResult || !pendingFile || !preview?.activationAllowed) return
+    setBusy(true); setError(''); setMessage('')
+    const payload: ValuationSnapshotUpload = {
+      baseRevision: bootstrap.valuationRevision,
+      valuationDate: parseResult.valuationDate,
+      filename: pendingFile.name,
+      fileHash: parseResult.fileHash,
+      parserVersion: VALUATION_PARSER_VERSION,
+      sourceRowCount: parseResult.sourceRowCount,
+      rejectedRowCount: parseResult.rejected.length,
+      marks: parseResult.marks,
+    }
+    try {
+      const updated = await api.valuationActivate(payload)
+      setBootstrap(updated)
+      clearCandidate()
+      setMessage(`已啟用估值版本 v${updated.valuationRevision}，估值日為 ${updated.activeSnapshot?.valuationDate ?? '—'}。`)
+    } catch (activateError) {
+      if (activateError instanceof ApiError && activateError.code === 'VALUATION_VERSION_CONFLICT') {
+        await loadValuation()
+        clearCandidate()
+        setError('其他瀏覽器已更新估值資料。系統已載入最新版，請重新選擇檔案。')
+      } else {
+        setError(activateError instanceof Error ? activateError.message : String(activateError))
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const active = bootstrap?.activeSnapshot ?? null
+  const valuation = bootstrap?.valuation ?? null
+  const candidate = preview?.valuation ?? null
+
+  return (
+    <>
+      <section className="panel" id="valuation">
+        <div className="panel-heading"><div>
+          <span>POINT-IN-TIME VALUATION · v0.3</span>
+          <h2>估值 Snapshot</h2>
+          <p>只使用估值日當天或更早的價格與匯率。這裡顯示資產價值與原幣未實現股票損益，尚未拆分匯兌損益或計算投資報酬率。</p>
+        </div></div>
+
+        {(message || error) && <div className={`banner ${error ? 'error' : ''}`}>{error || message}</div>}
+
+        {!bootstrap ? <div className="empty-state">正在載入估值資料…</div> : (
+          <>
+            <div className="metrics-grid">
+              <Metric label="估值版本" value={`v${bootstrap.valuationRevision}`} hint={active ? formatDateTime(active.activatedAt) : '尚未建立'} />
+              <Metric label="估值日" value={active?.valuationDate ?? '—'} hint={active?.filename ?? '尚未上傳'} />
+              <Metric label="估值狀態" value={valuation ? (valuation.complete ? '完整' : '不完整') : '尚未估值'} hint={valuation && !valuation.complete ? `${valuation.blockingIssueCount} 項阻擋問題` : undefined} />
+              <Metric label="TWD 總資產" value={valuation?.totalAssetsTwd === null || valuation?.totalAssetsTwd === undefined ? '—' : formatAmount(valuation.totalAssetsTwd)} hint="市值 Snapshot，不是投資報酬" />
+            </div>
+
+            {!valuation ? <div className="empty-state">目前沒有 ACTIVE 估值 Snapshot。請在下方上傳價格與匯率測試檔。</div> : (
+              <>
+                <div className="panel-heading"><div>
+                  <span>POSITION VALUATION</span><h2>持倉市值與原幣未實現損益</h2>
+                  <p>股票成本與損益保留原幣；最後再依估值日匯率換算為 TWD 市值。</p>
+                </div></div>
+                <div className="table-wrap"><table>
+                  <thead><tr>
+                    <th>標的</th><th>幣別</th><th className="numeric">股數</th><th className="numeric">剩餘成本</th>
+                    <th className="numeric">價格</th><th>價格日期</th><th className="numeric">原幣市值</th>
+                    <th className="numeric">原幣未實現損益</th><th className="numeric">匯率</th><th className="numeric">TWD 市值</th>
+                  </tr></thead>
+                  <tbody>{valuation.positions.map((position) => (
+                    <tr key={`${position.currency}-${position.ticker}`}>
+                      <td>{position.ticker}</td><td>{position.currency}</td>
+                      <td className="numeric">{formatAmount(position.quantity)}</td>
+                      <td className="numeric">{formatAmount(position.costBasis)}</td>
+                      <td className="numeric">{formatAmount(position.price)}</td>
+                      <td>{position.priceDate ?? '—'}</td>
+                      <td className="numeric">{formatAmount(position.marketValueNative)}</td>
+                      <td className="numeric">{formatAmount(position.unrealizedPnlNative)}</td>
+                      <td className="numeric">{formatAmount(position.fxRate)}</td>
+                      <td className="numeric">{formatAmount(position.marketValueTwd)}</td>
+                    </tr>
+                  ))}</tbody>
+                </table></div>
+
+                <div className="panel-heading"><div>
+                  <span>CASH VALUATION</span><h2>現金換算</h2>
+                  <p>各幣別期末現金依估值日最新可用匯率換算；TWD 匯率固定為 1。</p>
+                </div></div>
+                <div className="table-wrap"><table>
+                  <thead><tr><th>幣別</th><th className="numeric">原幣現金</th><th className="numeric">匯率</th><th>匯率日期</th><th className="numeric">TWD 價值</th></tr></thead>
+                  <tbody>{valuation.cash.map((cash) => (
+                    <tr key={cash.currency}>
+                      <td>{cash.currency}</td>
+                      <td className="numeric">{formatAmount(cash.endingBalance)}</td>
+                      <td className="numeric">{formatAmount(cash.fxRate)}</td>
+                      <td>{cash.fxDate ?? '—'}</td>
+                      <td className="numeric">{formatAmount(cash.marketValueTwd)}</td>
+                    </tr>
+                  ))}</tbody>
+                </table></div>
+
+                {valuation.issues.length > 0 && (
+                  <div className="rejected-list">
+                    <strong>ACTIVE 估值有阻擋問題</strong>
+                    <ul>{valuation.issues.slice(0, 10).map((issue, index) => (
+                      <li key={`${issue.code}-${index}`}>{issue.code}：{issue.message}</li>
+                    ))}</ul>
+                  </div>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </section>
+
+      <section className="panel" id="valuation-upload">
+        <div className="panel-heading"><div>
+          <span>VALUATION SNAPSHOT UPDATE</span>
+          <h2>上傳價格與匯率</h2>
+          <p>估值檔會先解析、比較並以目前 ACTIVE 交易資料試算；完整且無衝突時才能啟用。</p>
+        </div></div>
+
+        <label className={`upload-zone ${busy ? 'busy' : ''}`}>
+          <input type="file" accept=".xlsx,.xls,.csv" disabled={busy || !bootstrap} onChange={(event) => void selectValuationFile(event.target.files?.[0] ?? null)} />
+          <strong>{busy ? '正在驗證估值…' : '選擇估值 Excel 或 CSV'}</strong>
+          <span>欄位：估值日、標記日期、類型、股票代號、幣別、數值、來源</span>
+        </label>
+
+        {parseResult && preview && (
+          <>
+            <div className="preview-grid">
+              <div className="diff-card"><span>目前標記</span><strong>{preview.diff.oldMarkCount.toLocaleString()}</strong></div>
+              <div className="diff-card"><span>新版標記</span><strong>{preview.diff.newMarkCount.toLocaleString()}</strong></div>
+              <div className="diff-card positive"><span>新增</span><strong>+{preview.diff.added.toLocaleString()}</strong></div>
+              <div className="diff-card negative"><span>刪除／變更</span><strong>-{preview.diff.removed.toLocaleString()}</strong></div>
+              <div className="diff-card"><span>拒收列</span><strong>{parseResult.rejected.length.toLocaleString()}</strong></div>
+              <div className={`diff-card ${candidate?.blockingIssueCount ? 'negative' : 'positive'}`}><span>估值阻擋</span><strong>{candidate?.blockingIssueCount.toLocaleString() ?? '—'}</strong></div>
+              <div className="diff-card"><span>未來標記忽略</span><strong>{candidate?.futureMarkCount.toLocaleString() ?? '—'}</strong></div>
+              <div className={`diff-card ${preview.activationAllowed ? 'positive' : 'negative'}`}><span>候選總資產</span><strong>{candidate?.totalAssetsTwd === null || candidate?.totalAssetsTwd === undefined ? '不完整' : formatAmount(candidate.totalAssetsTwd)}</strong></div>
+              <div className="preview-actions">
+                <button className="secondary" onClick={clearCandidate} disabled={busy}>取消</button>
+                <button className="primary" onClick={() => void activateValuation()} disabled={busy || preview.diff.unchanged || !preview.activationAllowed}>確認啟用估值</button>
+              </div>
+            </div>
+
+            {parseResult.rejected.length > 0 && (
+              <div className="rejected-list">
+                <strong>估值檔尚不能啟用：請修正拒收列</strong>
+                <ul>{parseResult.rejected.slice(0, 10).map((row) => <li key={row.sourceRowNumber}>第 {row.sourceRowNumber} 列：{row.reason}</li>)}</ul>
+              </div>
+            )}
+
+            {candidate && candidate.issues.length > 0 && (
+              <div className="rejected-list">
+                <strong>估值檔尚不能啟用：價格或匯率不完整</strong>
+                <ul>{candidate.issues.slice(0, 10).map((issue, index) => (
+                  <li key={`${issue.code}-${index}`}>{issue.code}：{issue.message}</li>
+                ))}</ul>
+              </div>
+            )}
+          </>
+        )}
+      </section>
+    </>
+  )
+}
