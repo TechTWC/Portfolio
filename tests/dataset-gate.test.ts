@@ -34,7 +34,7 @@ describe('dataset activation gate', () => {
     expect(result.issues).toEqual([])
   })
 
-  it('blocks an oversell', () => {
+  it('blocks an oversell without duplicating the FX cost basis error', () => {
     const result = validateDatasetForActivation([
       row({ quantity: 2, amountForeign: 200 }),
       row({ sourceRowNumber: 3, tradeDate: '2026-01-02', quantity: -3, amountForeign: 330 }),
@@ -44,7 +44,7 @@ describe('dataset activation gate', () => {
     expect(result.issues[0]).toMatchObject({ domain: 'SECURITY_ACCOUNTING', code: 'OVERSELL' })
   })
 
-  it('blocks a withdrawal larger than tracked cash', () => {
+  it('blocks a withdrawal larger than tracked cash without duplicate pool errors', () => {
     const result = validateDatasetForActivation([
       row({ transactionType: 'CASH_IN', ticker: '', quantity: 0, price: 0, amountForeign: 10_000 }),
       row({ sourceRowNumber: 3, tradeDate: '2026-01-02', transactionType: 'CASH_OUT', ticker: '', quantity: 0, price: 0, amountForeign: 20_000 }),
@@ -54,7 +54,37 @@ describe('dataset activation gate', () => {
     expect(result.issues[0]).toMatchObject({ domain: 'CASH_FX_FUNDING', code: 'CASH_OUT_EXCEEDS_BALANCE' })
   })
 
-  it('keeps legacy security-only files compatible', () => {
+  it('blocks a foreign security sale that lacks sale-date FX for TWD basis', () => {
+    const result = validateDatasetForActivation([
+      row({
+        ticker: 'AAPL',
+        currency: 'USD',
+        quantity: 2,
+        price: 200,
+        amountForeign: 400,
+        fxRate: 32,
+      }),
+      row({
+        sourceRowNumber: 3,
+        tradeDate: '2026-01-02',
+        ticker: 'AAPL',
+        currency: 'USD',
+        quantity: -1,
+        price: 250,
+        amountForeign: 250,
+        fxRate: null,
+      }),
+    ])
+
+    expect(result.blockingIssueCount).toBe(1)
+    expect(result.issues[0]).toMatchObject({
+      domain: 'FX_COST_BASIS',
+      code: 'MISSING_SECURITY_SALE_FX',
+      sourceRowNumber: 3,
+    })
+  })
+
+  it('keeps legacy security-only files compatible when historical FX is supplied', () => {
     const result = validateDatasetForActivation([
       row({ ticker: '2330.TW', quantity: 10, amountForeign: 10_000 }),
       row({ sourceRowNumber: 3, tradeDate: '2026-01-02', ticker: 'AAPL', currency: 'USD', quantity: 2, price: 200, amountForeign: 400, fxRate: 32.5 }),
