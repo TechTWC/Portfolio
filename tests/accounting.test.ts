@@ -102,4 +102,16 @@ describe('portfolio accounting core', () => {
     expect(result.positions[0].quantity).toBe(0)
     expect(result.positions[0].realizedPnl).toBe(20)
   })
+
+  it('leaves cash and FX rows to cash-ledger v0.2 without stale warnings', () => {
+    const result = buildPortfolioAccounting([
+      transaction({ transactionType: 'CASH_IN', ticker: '', currency: 'TWD', quantity: 0, price: 0, amountForeign: 100_000 }),
+      transaction({ sourceRowNumber: 3, transactionType: 'FX_BUY', ticker: '', currency: 'USD', quantity: 0, price: 0, amountForeign: 2_000, fxRate: 32 }),
+      transaction({ sourceRowNumber: 4, tradeDate: '2026-01-02', ticker: 'AAPL', currency: 'USD', quantity: 1, price: 200, amountForeign: 200 }),
+    ])
+
+    expect(result.deferredTransactionCount).toBe(2)
+    expect(result.issues).toEqual([])
+    expect(result.positions[0]).toMatchObject({ ticker: 'AAPL', quantity: 1, costBasis: 200 })
+  })
 })
