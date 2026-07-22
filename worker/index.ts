@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { datasetUploadSchema } from '../src/lib/contracts'
+import { validateDatasetForActivation } from '../src/lib/dataset-gate'
 import { compareTransactionSets } from '../src/lib/diff'
 import { requireUser, type Bindings, type Variables } from './auth'
 import { activateDataset, currentRevision, getActiveTransactions, getBootstrap } from './repository'
@@ -34,7 +35,13 @@ app.post('/api/datasets/preview', async (c) => {
   if (parsed.data.transactions.some((row) => row.currency !== 'TWD' && row.fxRate === null)) {
     warnings.push('部分外幣交易缺少輸入匯率，財務引擎將需要市場匯率 fallback')
   }
-  return c.json({ diff, warnings })
+
+  const activationGate = validateDatasetForActivation(parsed.data.transactions)
+  if (activationGate.blockingIssueCount > 0) {
+    warnings.push(`新檔案有 ${activationGate.blockingIssueCount} 項帳務或資金阻擋錯誤，修正前不能啟用`)
+  }
+
+  return c.json({ diff, warnings, activationGate })
 })
 
 app.post('/api/datasets/activate', async (c) => {
@@ -54,6 +61,15 @@ app.post('/api/datasets/activate', async (c) => {
   }
   const duplicateCount = parsed.data.transactions.length - new Set(parsed.data.transactions.map((row) => row.rowHash)).size
   if (duplicateCount > 0) return c.json({ error: `資料包含 ${duplicateCount} 個重複 rowHash` }, 400)
+
+  const activationGate = validateDatasetForActivation(parsed.data.transactions)
+  if (activationGate.blockingIssueCount > 0) {
+    return c.json({
+      error: `新檔案有 ${activationGate.blockingIssueCount} 項帳務或資金阻擋錯誤，不能啟用`,
+      code: 'DATASET_ACCOUNTING_BLOCKED',
+      issues: activationGate.issues,
+    }, 400)
+  }
 
   try {
     await activateDataset(c.env.DB, user, parsed.data, { duplicateCount })
