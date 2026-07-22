@@ -94,6 +94,10 @@ export async function requireUser(c: Context<{ Bindings: Bindings; Variables: Va
       `INSERT INTO portfolio_state (user_id, cloud_revision)
        VALUES (?, 0) ON CONFLICT(user_id) DO NOTHING`,
     ).bind(id),
+    c.env.DB.prepare(
+      `INSERT INTO valuation_state (user_id, valuation_revision)
+       VALUES (?, 0) ON CONFLICT(user_id) DO NOTHING`,
+    ).bind(id),
   ])
   c.set('user', { id, email })
   await next()
