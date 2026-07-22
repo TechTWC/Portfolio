@@ -1,12 +1,12 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
-import ValuationPortal from './ValuationPortal'
+import ValuationStandalone from './ValuationStandalone'
 import './styles.css'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
-    <ValuationPortal />
+    <ValuationStandalone />
   </StrictMode>,
 )
