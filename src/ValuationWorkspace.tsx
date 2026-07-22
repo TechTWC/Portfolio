@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ApiError, api } from './lib/api'
+import type { BootstrapResponse } from './lib/contracts'
+import { buildFxCostPool } from './lib/fx-cost-pool'
 import type {
   ValuationBootstrapResponse,
   ValuationPreviewResponse,
   ValuationSnapshotUpload,
 } from './lib/valuation-contracts'
+import { reconcileValuationWithTwdCost } from './lib/valuation-cost-reconciliation'
 import {
   parseValuationFile,
   VALUATION_PARSER_VERSION,
@@ -32,8 +35,13 @@ function Metric({ label, value, hint }: { label: string; value: string; hint?: s
   )
 }
 
+function positionKey(ticker: string, currency: string): string {
+  return `${ticker.toUpperCase()}\u0000${currency.toUpperCase()}`
+}
+
 export default function ValuationWorkspace() {
   const [bootstrap, setBootstrap] = useState<ValuationBootstrapResponse | null>(null)
+  const [portfolioBootstrap, setPortfolioBootstrap] = useState<BootstrapResponse | null>(null)
   const [parseResult, setParseResult] = useState<ValuationParseResult | null>(null)
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<ValuationPreviewResponse | null>(null)
@@ -50,7 +58,12 @@ export default function ValuationWorkspace() {
   async function loadValuation() {
     setError('')
     try {
-      setBootstrap(await api.valuationBootstrap())
+      const [valuationBootstrap, transactionBootstrap] = await Promise.all([
+        api.valuationBootstrap(),
+        api.bootstrap(),
+      ])
+      setBootstrap(valuationBootstrap)
+      setPortfolioBootstrap(transactionBootstrap)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError))
     }
@@ -125,14 +138,31 @@ export default function ValuationWorkspace() {
   const active = bootstrap?.activeSnapshot ?? null
   const valuation = bootstrap?.valuation ?? null
   const candidate = preview?.valuation ?? null
+  const fxCost = useMemo(
+    () => buildFxCostPool(portfolioBootstrap?.transactions ?? []),
+    [portfolioBootstrap],
+  )
+  const reconciliation = useMemo(
+    () => valuation ? reconcileValuationWithTwdCost(valuation, fxCost) : null,
+    [valuation, fxCost],
+  )
+  const reconciliationByPosition = useMemo(
+    () => new Map(
+      (reconciliation?.positions ?? []).map((position) => [
+        positionKey(position.ticker, position.currency),
+        position,
+      ]),
+    ),
+    [reconciliation],
+  )
 
   return (
     <>
       <section className="panel" id="valuation">
         <div className="panel-heading"><div>
-          <span>POINT-IN-TIME VALUATION · v0.3</span>
+          <span>POINT-IN-TIME VALUATION · v0.3 + TWD BASIS v0.4</span>
           <h2>估值 Snapshot</h2>
-          <p>只使用估值日當天或更早的價格與匯率。這裡顯示資產價值與原幣未實現股票損益，尚未拆分匯兌損益或計算投資報酬率。</p>
+          <p>市值只使用估值日當天或更早的價格與匯率；TWD 成本來自歷史外幣移動平均成本池。尚未計算報酬率或拆分價格與匯率貢獻。</p>
         </div></div>
 
         {(message || error) && <div className={`banner ${error ? 'error' : ''}`}>{error || message}</div>}
@@ -146,31 +176,46 @@ export default function ValuationWorkspace() {
               <Metric label="TWD 總資產" value={valuation?.totalAssetsTwd === null || valuation?.totalAssetsTwd === undefined ? '—' : formatAmount(valuation.totalAssetsTwd)} hint="市值 Snapshot，不是投資報酬" />
             </div>
 
+            {valuation && (
+              <div className="metrics-grid">
+                <Metric label="持倉 TWD 成本" value={formatAmount(reconciliation?.totalPositionTwdCostBasis ?? null)} hint="歷史移動平均帳面成本" />
+                <Metric label="TWD 未實現損益" value={formatAmount(reconciliation?.totalUnrealizedPnlTwd ?? null)} hint="持倉市值減持倉 TWD 成本" />
+                <Metric label="TWD 已實現損益" value={formatAmount(reconciliation?.totalRealizedPnlTwd ?? null)} hint="證券與直接換匯已實現損益" />
+                <Metric label="成本對帳" value={reconciliation?.complete ? '完整' : '不完整'} hint={!reconciliation?.complete ? `${reconciliation?.missingCostKeys.length ?? 0} 檔缺成本／${reconciliation?.costBlockingIssueCount ?? 0} 項成本錯誤` : '估值持倉與 TWD 成本逐檔一致'} />
+              </div>
+            )}
+
             {!valuation ? <div className="empty-state">目前沒有 ACTIVE 估值 Snapshot。請在下方上傳價格與匯率測試檔。</div> : (
               <>
                 <div className="panel-heading"><div>
-                  <span>POSITION VALUATION</span><h2>持倉市值與原幣未實現損益</h2>
-                  <p>股票成本與損益保留原幣；最後再依估值日匯率換算為 TWD 市值。</p>
+                  <span>POSITION VALUATION</span><h2>持倉市值、原幣損益與 TWD 損益</h2>
+                  <p>原幣損益衡量股票本身；TWD 未實現損益直接比較目前 TWD 市值與歷史 TWD 成本，包含價格及匯率變動的合計效果。</p>
                 </div></div>
                 <div className="table-wrap"><table>
                   <thead><tr>
-                    <th>標的</th><th>幣別</th><th className="numeric">股數</th><th className="numeric">剩餘成本</th>
+                    <th>標的</th><th>幣別</th><th className="numeric">股數</th><th className="numeric">原幣剩餘成本</th>
                     <th className="numeric">價格</th><th>價格日期</th><th className="numeric">原幣市值</th>
                     <th className="numeric">原幣未實現損益</th><th className="numeric">匯率</th><th className="numeric">TWD 市值</th>
+                    <th className="numeric">TWD 成本</th><th className="numeric">TWD 未實現損益</th>
                   </tr></thead>
-                  <tbody>{valuation.positions.map((position) => (
-                    <tr key={`${position.currency}-${position.ticker}`}>
-                      <td>{position.ticker}</td><td>{position.currency}</td>
-                      <td className="numeric">{formatAmount(position.quantity)}</td>
-                      <td className="numeric">{formatAmount(position.costBasis)}</td>
-                      <td className="numeric">{formatAmount(position.price)}</td>
-                      <td>{position.priceDate ?? '—'}</td>
-                      <td className="numeric">{formatAmount(position.marketValueNative)}</td>
-                      <td className="numeric">{formatAmount(position.unrealizedPnlNative)}</td>
-                      <td className="numeric">{formatAmount(position.fxRate)}</td>
-                      <td className="numeric">{formatAmount(position.marketValueTwd)}</td>
-                    </tr>
-                  ))}</tbody>
+                  <tbody>{valuation.positions.map((position) => {
+                    const twd = reconciliationByPosition.get(positionKey(position.ticker, position.currency))
+                    return (
+                      <tr key={`${position.currency}-${position.ticker}`}>
+                        <td>{position.ticker}</td><td>{position.currency}</td>
+                        <td className="numeric">{formatAmount(position.quantity)}</td>
+                        <td className="numeric">{formatAmount(position.costBasis)}</td>
+                        <td className="numeric">{formatAmount(position.price)}</td>
+                        <td>{position.priceDate ?? '—'}</td>
+                        <td className="numeric">{formatAmount(position.marketValueNative)}</td>
+                        <td className="numeric">{formatAmount(position.unrealizedPnlNative)}</td>
+                        <td className="numeric">{formatAmount(position.fxRate)}</td>
+                        <td className="numeric">{formatAmount(position.marketValueTwd)}</td>
+                        <td className="numeric">{formatAmount(twd?.twdCostBasis ?? null)}</td>
+                        <td className="numeric">{formatAmount(twd?.unrealizedPnlTwd ?? null)}</td>
+                      </tr>
+                    )
+                  })}</tbody>
                 </table></div>
 
                 <div className="panel-heading"><div>
@@ -196,6 +241,16 @@ export default function ValuationWorkspace() {
                     <ul>{valuation.issues.slice(0, 10).map((issue, index) => (
                       <li key={`${issue.code}-${index}`}>{issue.code}：{issue.message}</li>
                     ))}</ul>
+                  </div>
+                )}
+
+                {reconciliation && !reconciliation.complete && (
+                  <div className="rejected-list">
+                    <strong>TWD 成本對帳尚未完整</strong>
+                    <ul>
+                      {reconciliation.missingCostKeys.map((missing) => <li key={missing}>缺少成本：{missing}</li>)}
+                      {reconciliation.costBlockingIssueCount > 0 && <li>外幣成本池有 {reconciliation.costBlockingIssueCount} 項阻擋錯誤。</li>}
+                    </ul>
                   </div>
                 )}
               </>
@@ -243,7 +298,7 @@ export default function ValuationWorkspace() {
 
             {candidate && candidate.issues.length > 0 && (
               <div className="rejected-list">
-                <strong>估值檔尚不能啟用：價格或匯率不完整</strong>
+                <strong>估值 Snapshot 尚不能啟用</strong>
                 <ul>{candidate.issues.slice(0, 10).map((issue, index) => (
                   <li key={`${issue.code}-${index}`}>{issue.code}：{issue.message}</li>
                 ))}</ul>

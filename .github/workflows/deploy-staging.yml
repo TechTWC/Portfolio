@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'agent/cloud-bootstrap-v0-1' || github.head_ref == 'agent/valuation-v0-3'))
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'agent/cloud-bootstrap-v0-1' || github.head_ref == 'agent/valuation-v0-3' || github.head_ref == 'agent/fx-cost-pool-v0-4'))
     name: Resolve Access, migrate and deploy
     runs-on: ubuntu-latest
     timeout-minutes: 20
