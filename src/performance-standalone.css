@@ -1,0 +1,45 @@
+.performance-fixed-link {
+  position: fixed;
+  left: 18px;
+  top: 388px;
+  z-index: 50;
+  width: 216px;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border-radius: 10px;
+  color: #e8eefc;
+  background: #1d2940;
+  text-decoration: none;
+  font-size: 14px;
+  box-shadow: 0 0 0 1px rgba(111, 140, 196, 0.15);
+}
+
+.performance-fixed-link:hover,
+.performance-fixed-link:focus-visible {
+  background: #263654;
+  outline: none;
+}
+
+.performance-standalone-shell {
+  margin-left: 256px;
+  padding: 18px 48px 56px;
+  background: #07101f;
+}
+
+.performance-xirr-highlight .metric-card:first-child strong {
+  font-size: clamp(2rem, 4vw, 3.4rem);
+}
+
+@media (max-width: 900px) {
+  .performance-fixed-link {
+    position: static;
+    display: block;
+    width: auto;
+    margin: 12px 16px;
+  }
+
+  .performance-standalone-shell {
+    margin-left: 0;
+    padding: 16px;
+  }
+}
