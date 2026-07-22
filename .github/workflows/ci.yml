@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm test
+      - name: Typecheck
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee typecheck.log
+      - name: Upload TypeScript diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: typecheck-log
+          path: typecheck.log
+          if-no-files-found: ignore
+          retention-days: 3
+      - run: npm run build
+      - name: Validate staging config renderer
+        env:
+          CLOUDFLARE_D1_DATABASE_ID: 00000000-0000-0000-0000-000000000001
+          CLOUDFLARE_D1_DATABASE_NAME: portfolio-analyzer-staging
+          CLOUDFLARE_WORKER_NAME: portfolio-analyzer-staging
+          CLOUDFLARE_ACCESS_AUD: test-audience
+          CLOUDFLARE_ACCESS_TEAM_DOMAIN: https://techtwc.cloudflareaccess.com
+        run: |
+          node scripts/render-wrangler-config.mjs
+          node --input-type=module -e "import { readFileSync } from 'node:fs'; const c=JSON.parse(readFileSync('.wrangler.staging.generated.jsonc','utf8')); if(c.name!=='portfolio-analyzer-staging'||c.d1_databases[0].database_id!==process.env.CLOUDFLARE_D1_DATABASE_ID||c.vars?.AUTH_MODE!=='access'||c.vars?.POLICY_AUD!==process.env.CLOUDFLARE_ACCESS_AUD||c.vars?.TEAM_DOMAIN!==process.env.CLOUDFLARE_ACCESS_TEAM_DOMAIN||c.vars?.DEV_USER_EMAIL) process.exit(1)"
+          rm .wrangler.staging.generated.jsonc
