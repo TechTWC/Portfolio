@@ -1,5 +1,10 @@
 import type { BootstrapResponse, DatasetDiff, DatasetUpload } from './contracts'
 import type { DatasetActivationGate } from './dataset-gate'
+import type {
+  ValuationBootstrapResponse,
+  ValuationPreviewResponse,
+  ValuationSnapshotUpload,
+} from './valuation-contracts'
 
 export class ApiError extends Error {
   constructor(
@@ -31,6 +36,18 @@ export const api = {
     }),
   activate: (payload: DatasetUpload) =>
     requestJson<BootstrapResponse>('/api/datasets/activate', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  valuationBootstrap: () =>
+    requestJson<ValuationBootstrapResponse>('/api/valuations/bootstrap'),
+  valuationPreview: (payload: ValuationSnapshotUpload) =>
+    requestJson<ValuationPreviewResponse>('/api/valuations/preview', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  valuationActivate: (payload: ValuationSnapshotUpload) =>
+    requestJson<ValuationBootstrapResponse>('/api/valuations/activate', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
