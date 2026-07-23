@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError, api } from './lib/api'
 import type { BootstrapResponse } from './lib/contracts'
 import { buildFxCostPool } from './lib/fx-cost-pool'
@@ -48,11 +48,13 @@ export default function ValuationWorkspace() {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   function clearCandidate() {
     setParseResult(null)
     setPendingFile(null)
     setPreview(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   async function loadValuation() {
@@ -267,7 +269,18 @@ export default function ValuationWorkspace() {
         </div></div>
 
         <label className={`upload-zone ${busy ? 'busy' : ''}`}>
-          <input type="file" accept=".xlsx,.xls,.csv" disabled={busy || !bootstrap} onChange={(event) => void selectValuationFile(event.target.files?.[0] ?? null)} />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            disabled={busy || !bootstrap}
+            onClick={(event) => { event.currentTarget.value = '' }}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0] ?? null
+              event.currentTarget.value = ''
+              void selectValuationFile(file)
+            }}
+          />
           <strong>{busy ? '正在驗證估值…' : '選擇估值 Excel 或 CSV'}</strong>
           <span>欄位：估值日、標記日期、類型、股票代號、幣別、數值、來源</span>
         </label>
