@@ -11,6 +11,8 @@ export class ApiError extends Error {
     message: string,
     readonly status: number,
     readonly code?: string,
+    readonly currentRevision?: number,
+    readonly baseRevision?: number,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -20,10 +22,28 @@ export class ApiError extends Error {
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    cache: 'no-store',
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'no-cache',
+      ...(init?.headers ?? {}),
+    },
   })
-  const body = await response.json().catch(() => ({})) as { error?: string; code?: string }
-  if (!response.ok) throw new ApiError(body.error ?? `HTTP ${response.status}`, response.status, body.code)
+  const body = await response.json().catch(() => ({})) as {
+    error?: string
+    code?: string
+    currentRevision?: number
+    baseRevision?: number
+  }
+  if (!response.ok) {
+    throw new ApiError(
+      body.error ?? `HTTP ${response.status}`,
+      response.status,
+      body.code,
+      body.currentRevision,
+      body.baseRevision,
+    )
+  }
   return body as T
 }
 
