@@ -1,0 +1,41 @@
+.historical-nav-fixed-link {
+  position: fixed;
+  left: 18px;
+  top: 442px;
+  z-index: 50;
+  width: 216px;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border-radius: 10px;
+  color: #e8eefc;
+  background: #1d2940;
+  text-decoration: none;
+  font-size: 14px;
+  box-shadow: 0 0 0 1px rgba(111, 140, 196, 0.15);
+}
+
+.historical-nav-fixed-link:hover,
+.historical-nav-fixed-link:focus-visible {
+  background: #263654;
+  outline: none;
+}
+
+.historical-nav-standalone-shell {
+  margin-left: 256px;
+  padding: 18px 48px 56px;
+  background: #07101f;
+}
+
+@media (max-width: 900px) {
+  .historical-nav-fixed-link {
+    position: static;
+    display: block;
+    width: auto;
+    margin: 12px 16px;
+  }
+
+  .historical-nav-standalone-shell {
+    margin-left: 0;
+    padding: 16px;
+  }
+}
