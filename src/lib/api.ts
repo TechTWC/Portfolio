@@ -1,4 +1,5 @@
 import type { BootstrapResponse, DatasetDiff, DatasetUpload } from './contracts'
+import { publishPortfolioDataUpdate } from './data-sync'
 import type { DatasetActivationGate } from './dataset-gate'
 import type {
   ValuationBootstrapResponse,
@@ -47,6 +48,10 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+function publishAfterCurrentHandler(update: Parameters<typeof publishPortfolioDataUpdate>[0]) {
+  setTimeout(() => publishPortfolioDataUpdate(update), 0)
+}
+
 export const api = {
   bootstrap: () => requestJson<BootstrapResponse>('/api/bootstrap'),
   preview: (payload: DatasetUpload) =>
@@ -54,11 +59,17 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  activate: (payload: DatasetUpload) =>
-    requestJson<BootstrapResponse>('/api/datasets/activate', {
+  activate: async (payload: DatasetUpload) => {
+    const updated = await requestJson<BootstrapResponse>('/api/datasets/activate', {
       method: 'POST',
       body: JSON.stringify(payload),
-    }),
+    })
+    publishAfterCurrentHandler({
+      kind: 'TRANSACTIONS_ACTIVATED',
+      transactionRevision: updated.cloudRevision,
+    })
+    return updated
+  },
   valuationBootstrap: () =>
     requestJson<ValuationBootstrapResponse>('/api/valuations/bootstrap'),
   valuationPreview: (payload: ValuationSnapshotUpload) =>
@@ -66,9 +77,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  valuationActivate: (payload: ValuationSnapshotUpload) =>
-    requestJson<ValuationBootstrapResponse>('/api/valuations/activate', {
+  valuationActivate: async (payload: ValuationSnapshotUpload) => {
+    const updated = await requestJson<ValuationBootstrapResponse>('/api/valuations/activate', {
       method: 'POST',
       body: JSON.stringify(payload),
-    }),
+    })
+    publishAfterCurrentHandler({
+      kind: 'VALUATION_ACTIVATED',
+      valuationRevision: updated.valuationRevision,
+    })
+    return updated
+  },
 }
