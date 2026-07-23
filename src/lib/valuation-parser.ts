@@ -5,7 +5,7 @@ import {
   type NormalizedValuationMark,
 } from './valuation-contracts'
 
-export const VALUATION_PARSER_VERSION = 'valuation-v0.3.0'
+export const VALUATION_PARSER_VERSION = 'valuation-v0.3.1'
 
 const COLUMN_ALIASES: Record<string, string[]> = {
   valuationDate: ['估值日', '評價日', '评价日', 'valuation_date', 'valuationdate', 'as_of_date', 'asofdate'],
@@ -50,13 +50,19 @@ function numberValue(value: unknown): number {
   return parsed
 }
 
+function calendarDateToIso(year: number, month: number, day: number): string {
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
 function excelDateToIso(value: unknown): string {
-  if (value instanceof Date && !Number.isNaN(value.valueOf())) return value.toISOString().slice(0, 10)
+  if (value instanceof Date && !Number.isNaN(value.valueOf())) {
+    // Spreadsheet dates are calendar days, not instants in time. Using toISOString()
+    // can shift a Taiwan-local midnight to the previous UTC date.
+    return calendarDateToIso(value.getFullYear(), value.getMonth() + 1, value.getDate())
+  }
   if (typeof value === 'number') {
     const parsed = XLSX.SSF.parse_date_code(value)
-    if (parsed) {
-      return `${String(parsed.y).padStart(4, '0')}-${String(parsed.m).padStart(2, '0')}-${String(parsed.d).padStart(2, '0')}`
-    }
+    if (parsed) return calendarDateToIso(parsed.y, parsed.m, parsed.d)
   }
   const raw = String(value ?? '').trim().replaceAll('/', '-')
   const parsed = new Date(`${raw}T00:00:00Z`)
@@ -184,7 +190,9 @@ export async function parseValuationRows(
 export async function parseValuationFile(file: File): Promise<ValuationParseResult> {
   const buffer = await file.arrayBuffer()
   const fileHash = await sha256Hex(buffer)
-  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true })
+  // Keep spreadsheet calendar dates as raw strings or serial numbers. Converting
+  // them to JS Date objects can introduce browser-timezone date shifts.
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: false })
   const firstSheet = workbook.SheetNames[0]
   if (!firstSheet) throw new Error('檔案沒有可讀取的工作表')
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[firstSheet], {
