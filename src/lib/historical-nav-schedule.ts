@@ -1,3 +1,4 @@
+import type { NormalizedTransaction } from './contracts'
 import type { ValuationMark } from './valuation'
 
 function isIsoDate(value: string): boolean {
@@ -9,12 +10,20 @@ function isIsoDate(value: string): boolean {
 export function deriveHistoricalNavDates(
   marks: ValuationMark[],
   activeValuationDate: string | null,
+  transactions: NormalizedTransaction[] = [],
 ): string[] {
   const dates = new Set<string>()
 
   for (const mark of marks) {
     if (mark.markType === 'PRICE' && isIsoDate(mark.markDate)) dates.add(mark.markDate)
   }
+
+  const earliestTransactionDate = transactions
+    .map((row) => row.tradeDate)
+    .filter(isIsoDate)
+    .sort()[0]
+  if (earliestTransactionDate) dates.add(earliestTransactionDate)
+
   if (activeValuationDate && isIsoDate(activeValuationDate)) dates.add(activeValuationDate)
 
   return [...dates].sort()
