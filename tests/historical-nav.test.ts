@@ -191,11 +191,12 @@ describe('historical as-of NAV reconstruction', () => {
   })
 
   it('is deterministic regardless of transaction and mark input order', () => {
-    const direct = buildHistoricalNavSeries({ transactions, marks, dates: ['2026-01-15', '2026-03-15'] })
+    const dates = ['2026-03-15', '2026-01-15']
+    const direct = buildHistoricalNavSeries({ transactions, marks, dates })
     const reversed = buildHistoricalNavSeries({
       transactions: [...transactions].reverse(),
       marks: [...marks].reverse(),
-      dates: ['2026-03-15', '2026-01-15'],
+      dates,
     })
 
     expect(reversed).toEqual(direct)
