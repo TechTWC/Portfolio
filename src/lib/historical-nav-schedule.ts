@@ -12,19 +12,42 @@ export function deriveHistoricalNavDates(
   activeValuationDate: string | null,
   transactions: NormalizedTransaction[] = [],
 ): string[] {
-  const dates = new Set<string>()
-
-  for (const mark of marks) {
-    if (mark.markType === 'PRICE' && isIsoDate(mark.markDate)) dates.add(mark.markDate)
-  }
-
   const earliestTransactionDate = transactions
     .map((row) => row.tradeDate)
     .filter(isIsoDate)
     .sort()[0]
-  if (earliestTransactionDate) dates.add(earliestTransactionDate)
+  if (
+    !earliestTransactionDate
+    || !activeValuationDate
+    || !isIsoDate(activeValuationDate)
+    || earliestTransactionDate > activeValuationDate
+  ) {
+    return []
+  }
 
-  if (activeValuationDate && isIsoDate(activeValuationDate)) dates.add(activeValuationDate)
+  const dates = new Set<string>([earliestTransactionDate, activeValuationDate])
+
+  for (const mark of marks) {
+    if (
+      (mark.markType === 'PRICE' || mark.markType === 'FX')
+      && isIsoDate(mark.markDate)
+      && mark.markDate >= earliestTransactionDate
+      && mark.markDate <= activeValuationDate
+    ) {
+      dates.add(mark.markDate)
+    }
+  }
+
+  for (const row of transactions) {
+    if (
+      (row.transactionType === 'CASH_IN' || row.transactionType === 'CASH_OUT')
+      && isIsoDate(row.tradeDate)
+      && row.tradeDate >= earliestTransactionDate
+      && row.tradeDate <= activeValuationDate
+    ) {
+      dates.add(row.tradeDate)
+    }
+  }
 
   return [...dates].sort()
 }

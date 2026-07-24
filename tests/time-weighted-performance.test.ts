@@ -3,6 +3,7 @@ import type { NormalizedTransaction } from '../src/lib/contracts'
 import {
   buildHistoricalPerformanceSeries,
   calculateTimeWeightedPerformance,
+  HISTORICAL_PERFORMANCE_CALCULATION_VERSION,
   type TwrObservation,
 } from '../src/lib/time-weighted-performance'
 
@@ -131,6 +132,18 @@ describe('time-weighted performance and drawdown', () => {
     expect(result.annualizedTwr).toBeCloseTo(0.1, 12)
   })
 
+  it('reports a complete loss as minus 100 percent for TWR, annualized TWR, and drawdown', () => {
+    const result = calculateTimeWeightedPerformance([
+      observation('2026-01-01', 100),
+      observation('2026-07-01', 0),
+    ])
+
+    expect(result.complete).toBe(true)
+    expect(result.cumulativeTwr).toBe(-1)
+    expect(result.annualizedTwr).toBe(-1)
+    expect(result.drawdown.maximumDrawdown).toBe(-1)
+  })
+
   it('automatically inserts every external cash-flow date into the NAV series', () => {
     const transactions = [
       cashTransaction({ sourceRowNumber: 2, tradeDate: '2026-01-01', amountForeign: 10_000 }),
@@ -140,6 +153,10 @@ describe('time-weighted performance and drawdown', () => {
       transactions,
       marks: [],
       dates: ['2026-01-01', '2026-03-01'],
+      transactionRevision: 6,
+      valuationRevision: 4,
+      valuationSnapshotId: 'snapshot-v4',
+      valuationDate: '2026-03-01',
     })
 
     expect(result.observationDates).toEqual(['2026-01-01', '2026-02-01', '2026-03-01'])
@@ -150,6 +167,28 @@ describe('time-weighted performance and drawdown', () => {
       contributionTwd: 1_000,
       totalAssetsTwd: 11_000,
       periodReturn: 0,
+    })
+  })
+
+  it('carries transaction, valuation, snapshot, date, and calculation versions', () => {
+    const result = buildHistoricalPerformanceSeries({
+      transactions: [
+        cashTransaction({ tradeDate: '2026-01-01', amountForeign: 10_000 }),
+      ],
+      marks: [],
+      dates: ['2026-01-01', '2026-03-01'],
+      transactionRevision: 6,
+      valuationRevision: 4,
+      valuationSnapshotId: 'snapshot-v4',
+      valuationDate: '2026-03-01',
+    })
+
+    expect(result.provenance).toEqual({
+      transactionRevision: 6,
+      valuationRevision: 4,
+      valuationSnapshotId: 'snapshot-v4',
+      valuationDate: '2026-03-01',
+      calculationVersion: HISTORICAL_PERFORMANCE_CALCULATION_VERSION,
     })
   })
 

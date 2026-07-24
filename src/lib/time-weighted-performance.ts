@@ -7,6 +7,7 @@ import {
 
 const DAY_MS = 86_400_000
 const EPSILON = 1e-9
+export const HISTORICAL_PERFORMANCE_CALCULATION_VERSION = 'historical-performance-v0.6'
 
 export type HistoricalPerformanceIssueCode =
   | 'INSUFFICIENT_OBSERVATIONS'
@@ -69,7 +70,21 @@ export type HistoricalPerformanceSeries = {
   observationDates: string[]
   navSeries: HistoricalNavSeries
   performance: TimeWeightedPerformance
+  provenance: HistoricalPerformanceProvenance
 }
+
+export type HistoricalPerformanceSource = {
+  transactionRevision: number
+  valuationRevision: number
+  valuationSnapshotId: string | null
+  valuationDate: string | null
+}
+
+export type HistoricalPerformanceProvenance = HistoricalPerformanceSource & {
+  calculationVersion: typeof HISTORICAL_PERFORMANCE_CALCULATION_VERSION
+}
+
+export type HistoricalPerformanceInput = HistoricalNavInput & HistoricalPerformanceSource
 
 function clean(value: number): number {
   return Math.abs(value) < EPSILON ? 0 : value
@@ -272,8 +287,10 @@ export function calculateTimeWeightedPerformance(
 
   const cumulativeTwr = clean((finalPoint.growthIndex ?? 1) - 1)
   let annualizedTwr: number | null = null
-  if (dayCount !== null && dayCount > 0 && (1 + cumulativeTwr) > EPSILON) {
-    annualizedTwr = clean(Math.pow(1 + cumulativeTwr, 365 / dayCount) - 1)
+  if (dayCount !== null && dayCount > 0) {
+    annualizedTwr = (1 + cumulativeTwr) <= EPSILON
+      ? -1
+      : clean(Math.pow(1 + cumulativeTwr, 365 / dayCount) - 1)
   }
 
   const declineDays = daysBetween(maximumPeakDate, maximumTroughDate)
@@ -337,10 +354,17 @@ function requiredObservationDates(
 }
 
 export function buildHistoricalPerformanceSeries(
-  input: HistoricalNavInput,
+  input: HistoricalPerformanceInput,
 ): HistoricalPerformanceSeries {
-  const observationDates = requiredObservationDates(input.dates, input.transactions)
-  const navSeries = buildHistoricalNavSeries({ ...input, dates: observationDates })
+  const {
+    transactionRevision,
+    valuationRevision,
+    valuationSnapshotId,
+    valuationDate,
+    ...navInput
+  } = input
+  const observationDates = requiredObservationDates(navInput.dates, navInput.transactions)
+  const navSeries = buildHistoricalNavSeries({ ...navInput, dates: observationDates })
   const observations: TwrObservation[] = navSeries.points.map((point) => ({
     date: point.asOfDate,
     complete: point.complete,
@@ -350,9 +374,16 @@ export function buildHistoricalPerformanceSeries(
   }))
 
   return {
-    requestedDates: [...input.dates],
+    requestedDates: [...navInput.dates],
     observationDates,
     navSeries,
     performance: calculateTimeWeightedPerformance(observations),
+    provenance: {
+      transactionRevision,
+      valuationRevision,
+      valuationSnapshotId,
+      valuationDate,
+      calculationVersion: HISTORICAL_PERFORMANCE_CALCULATION_VERSION,
+    },
   }
 }

@@ -37,7 +37,7 @@ function transaction(overrides: Partial<NormalizedTransaction>): NormalizedTrans
 }
 
 describe('historical NAV schedule derivation', () => {
-  it('uses unique sorted PRICE dates, inception, and the active valuation date', () => {
+  it('uses unique sorted PRICE and FX dates, inception, and the active valuation date', () => {
     expect(deriveHistoricalNavDates([
       mark({ markDate: '2026-03-31' }),
       mark({ sourceRowNumber: 3, markDate: '2026-01-31' }),
@@ -46,7 +46,33 @@ describe('historical NAV schedule derivation', () => {
     ], '2026-06-30', [
       transaction({ tradeDate: '2026-01-01' }),
       transaction({ sourceRowNumber: 3, tradeDate: '2026-04-01', transactionType: 'SECURITY', ticker: 'TEST', quantity: 1, price: 100, amountForeign: 100 }),
-    ])).toEqual(['2026-01-01', '2026-01-31', '2026-03-31', '2026-06-30'])
+    ])).toEqual(['2026-01-01', '2026-01-31', '2026-02-28', '2026-03-31', '2026-06-30'])
+  })
+
+  it('excludes marks before portfolio inception', () => {
+    expect(deriveHistoricalNavDates([
+      mark({ markDate: '2025-12-31' }),
+      mark({ sourceRowNumber: 3, markDate: '2026-01-31' }),
+    ], '2026-06-30', [
+      transaction({ tradeDate: '2026-01-01' }),
+    ])).toEqual(['2026-01-01', '2026-01-31', '2026-06-30'])
+  })
+
+  it('excludes marks after the active valuation date', () => {
+    expect(deriveHistoricalNavDates([
+      mark({ markDate: '2026-01-31' }),
+      mark({ sourceRowNumber: 3, markDate: '2026-07-01' }),
+    ], '2026-06-30', [
+      transaction({ tradeDate: '2026-01-01' }),
+    ])).toEqual(['2026-01-01', '2026-01-31', '2026-06-30'])
+  })
+
+  it('includes external cash-flow dates within the active range', () => {
+    expect(deriveHistoricalNavDates([], '2026-06-30', [
+      transaction({ tradeDate: '2026-01-01' }),
+      transaction({ sourceRowNumber: 3, tradeDate: '2026-02-15', transactionType: 'CASH_OUT', amountForeign: 500 }),
+      transaction({ sourceRowNumber: 4, tradeDate: '2026-03-01', transactionType: 'SECURITY', ticker: 'TEST', quantity: 1, price: 100, amountForeign: 100 }),
+    ])).toEqual(['2026-01-01', '2026-02-15', '2026-06-30'])
   })
 
   it('still includes inception and active valuation dates for a cash-only portfolio', () => {

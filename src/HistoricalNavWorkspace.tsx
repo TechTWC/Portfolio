@@ -105,20 +105,26 @@ export default function HistoricalNavWorkspace() {
   const result = useMemo(() => {
     if (!transactions || !valuation) return null
     const marks = valuation.marks.map(toValuationMark)
+    const activeValuationDate = valuation.activeSnapshot?.valuationDate ?? null
     const dates = deriveHistoricalNavDates(
       marks,
-      valuation.activeSnapshot?.valuationDate ?? null,
+      activeValuationDate,
       transactions.transactions,
     )
     return buildHistoricalPerformanceSeries({
       transactions: transactions.transactions,
       marks,
       dates,
+      transactionRevision: transactions.cloudRevision,
+      valuationRevision: valuation.valuationRevision,
+      valuationSnapshotId: valuation.activeSnapshot?.id ?? null,
+      valuationDate: activeValuationDate,
     })
   }, [transactions, valuation])
 
   const series = result?.navSeries ?? null
   const performance = result?.performance ?? null
+  const provenance = result?.provenance ?? null
   const pointByDate = useMemo(
     () => new Map(series?.points.map((point) => [point.asOfDate, point]) ?? []),
     [series],
@@ -133,13 +139,20 @@ export default function HistoricalNavWorkspace() {
       </div></div>
 
       {error && <div className="banner error">{error}</div>}
-      {!series || !performance ? <div className="empty-state">正在重建歷史 NAV 與績效…</div> : (
+      {!series || !performance || !provenance ? <div className="empty-state">正在重建歷史 NAV 與績效…</div> : (
         <>
           <div className="metrics-grid">
             <Metric label="績效狀態" value={performance.complete ? '完整' : '待補資料'} hint={performance.complete ? 'NAV、TWR 與回撤可追溯' : `${performance.blockingIssueCount} 項績效阻擋問題`} />
-            <Metric label="歷史觀察點" value={performance.points.length.toLocaleString()} hint="含期初、PRICE 日期、外部資金流與 ACTIVE 估值日" />
+            <Metric label="歷史觀察點" value={performance.points.length.toLocaleString()} hint="含期初、PRICE／FX 日期、外部資金流與 ACTIVE 估值日" />
             <Metric label="完整 NAV 點" value={series.completePointCount.toLocaleString()} />
             <Metric label="不完整 NAV 點" value={series.incompletePointCount.toLocaleString()} hint={series.incompletePointCount > 0 ? '缺少價格、匯率或帳務資料' : '所有觀察點可完整估值'} />
+          </div>
+
+          <div className="empty-state">
+            交易 v{provenance.transactionRevision}｜估值 v{provenance.valuationRevision}
+            ｜估值 Snapshot {provenance.valuationSnapshotId ?? '—'}
+            ｜估值日 {provenance.valuationDate ?? '—'}
+            ｜計算 {provenance.calculationVersion}
           </div>
 
           <div className="metrics-grid">
