@@ -102,6 +102,24 @@ describe('time-weighted performance and drawdown', () => {
     expect(result.drawdown.currentlyInDrawdown).toBe(false)
   })
 
+  it('starts a new current underwater duration after an exact recovery', () => {
+    const result = calculateTimeWeightedPerformance([
+      observation('2026-01-01', 100),
+      observation('2026-01-02', 80),
+      observation('2026-01-03', 100),
+      observation('2026-01-04', 90),
+    ])
+
+    expect(result.cumulativeTwr).toBeCloseTo(-0.1, 12)
+    expect(result.annualizedTwr).toBeCloseTo(Math.pow(0.9, 365 / 3) - 1, 12)
+    expect(result.drawdown.maximumDrawdown).toBeCloseTo(-0.2, 12)
+    expect(result.drawdown.peakDate).toBe('2026-01-01')
+    expect(result.drawdown.troughDate).toBe('2026-01-02')
+    expect(result.drawdown.recoveryDate).toBe('2026-01-03')
+    expect(result.drawdown.currentPeakDate).toBe('2026-01-03')
+    expect(result.drawdown.currentUnderwaterDays).toBe(1)
+  })
+
   it('distinguishes historical maximum drawdown from current drawdown', () => {
     const result = calculateTimeWeightedPerformance([
       observation('2026-01-01', 100),

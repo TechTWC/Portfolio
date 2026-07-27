@@ -1,5 +1,5 @@
--- D1 keeps foreign-key enforcement enabled during migrations. Preserve the
--- referencing rows explicitly while rebuilding the parent table.
+-- Forward migration for deployments that already recorded the original 0003.
+-- Rebuild every table in the relationship so D1 never applies cascade actions.
 CREATE TABLE valuation_state_backup AS SELECT * FROM valuation_state;
 CREATE TABLE valuation_marks_backup AS SELECT * FROM valuation_marks;
 

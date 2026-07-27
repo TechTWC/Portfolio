@@ -277,8 +277,9 @@ export function calculateTimeWeightedPerformance(
     let peakValue = points[0].growthIndex ?? 1
     let peakDate = points[0].date
     for (const point of points) {
-      if ((point.growthIndex ?? 0) > peakValue + EPSILON) {
-        peakValue = point.growthIndex ?? peakValue
+      const pointGrowthIndex = point.growthIndex ?? 0
+      if (pointGrowthIndex + EPSILON >= peakValue) {
+        peakValue = Math.max(peakValue, pointGrowthIndex)
         peakDate = point.date
       }
     }
