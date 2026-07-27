@@ -22,6 +22,13 @@ import {
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 
+app.use('/api/*', async (c, next) => {
+  await next()
+  c.header('Cache-Control', 'no-store, no-cache, max-age=0, must-revalidate')
+  c.header('Pragma', 'no-cache')
+  c.header('Expires', '0')
+})
+
 app.get('/api/health', (c) => c.json({ ok: true, service: 'portfolio-analyzer-cloud' }))
 app.use('/api/*', requireUser)
 
@@ -36,7 +43,12 @@ app.post('/api/datasets/preview', async (c) => {
   const user = c.get('user')
   const revision = await currentRevision(c.env.DB, user.id)
   if (revision !== parsed.data.baseRevision) {
-    return c.json({ error: '雲端資料已更新，請先重新載入最新版本', code: 'VERSION_CONFLICT' }, 409)
+    return c.json({
+      error: `此分頁交易版本為 v${parsed.data.baseRevision}，雲端目前為 v${revision}`,
+      code: 'VERSION_CONFLICT',
+      baseRevision: parsed.data.baseRevision,
+      currentRevision: revision,
+    }, 409)
   }
 
   const oldRows = await getActiveTransactions(c.env.DB, user.id)
@@ -66,7 +78,12 @@ app.post('/api/datasets/activate', async (c) => {
   const user = c.get('user')
   const revision = await currentRevision(c.env.DB, user.id)
   if (revision !== parsed.data.baseRevision) {
-    return c.json({ error: '雲端資料已更新，請先重新載入最新版本', code: 'VERSION_CONFLICT' }, 409)
+    return c.json({
+      error: `此分頁交易版本為 v${parsed.data.baseRevision}，雲端目前為 v${revision}`,
+      code: 'VERSION_CONFLICT',
+      baseRevision: parsed.data.baseRevision,
+      currentRevision: revision,
+    }, 409)
   }
   if (parsed.data.rejectedRowCount > 0) {
     return c.json({ error: `新檔案有 ${parsed.data.rejectedRowCount} 列未通過驗證，不能啟用` }, 400)
@@ -90,7 +107,13 @@ app.post('/api/datasets/activate', async (c) => {
     await activateDataset(c.env.DB, user, parsed.data, { duplicateCount })
   } catch (error) {
     if (error instanceof Error && (error.message.includes('UNIQUE') || error.message === 'VERSION_CONFLICT')) {
-      return c.json({ error: '資料版本衝突或此檔案已上傳，請重新載入', code: 'VERSION_CONFLICT' }, 409)
+      const latestRevision = await currentRevision(c.env.DB, user.id)
+      return c.json({
+        error: `交易版本已變更；此分頁為 v${parsed.data.baseRevision}，雲端目前為 v${latestRevision}`,
+        code: 'VERSION_CONFLICT',
+        baseRevision: parsed.data.baseRevision,
+        currentRevision: latestRevision,
+      }, 409)
     }
     throw error
   }
@@ -125,7 +148,12 @@ app.post('/api/valuations/preview', async (c) => {
   const user = c.get('user')
   const revision = await currentValuationRevision(c.env.DB, user.id)
   if (revision !== parsed.data.baseRevision) {
-    return c.json({ error: '雲端估值資料已更新，請先重新載入', code: 'VALUATION_VERSION_CONFLICT' }, 409)
+    return c.json({
+      error: `此分頁估值版本為 v${parsed.data.baseRevision}，雲端目前為 v${revision}`,
+      code: 'VALUATION_VERSION_CONFLICT',
+      baseRevision: parsed.data.baseRevision,
+      currentRevision: revision,
+    }, 409)
   }
 
   const oldMarks = await getActiveValuationMarks(c.env.DB, user.id)
@@ -158,7 +186,12 @@ app.post('/api/valuations/activate', async (c) => {
   const user = c.get('user')
   const revision = await currentValuationRevision(c.env.DB, user.id)
   if (revision !== parsed.data.baseRevision) {
-    return c.json({ error: '雲端估值資料已更新，請先重新載入', code: 'VALUATION_VERSION_CONFLICT' }, 409)
+    return c.json({
+      error: `此分頁估值版本為 v${parsed.data.baseRevision}，雲端目前為 v${revision}`,
+      code: 'VALUATION_VERSION_CONFLICT',
+      baseRevision: parsed.data.baseRevision,
+      currentRevision: revision,
+    }, 409)
   }
   if (parsed.data.rejectedRowCount > 0 || parsed.data.sourceRowCount !== parsed.data.marks.length) {
     return c.json({ error: '估值檔仍有未通過驗證的資料列，不能啟用' }, 400)
@@ -186,7 +219,13 @@ app.post('/api/valuations/activate', async (c) => {
     })
   } catch (error) {
     if (error instanceof Error && (error.message.includes('UNIQUE') || error.message === 'VALUATION_VERSION_CONFLICT')) {
-      return c.json({ error: '估值版本衝突或此檔案已上傳，請重新載入', code: 'VALUATION_VERSION_CONFLICT' }, 409)
+      const latestRevision = await currentValuationRevision(c.env.DB, user.id)
+      return c.json({
+        error: `估值版本已變更；此分頁為 v${parsed.data.baseRevision}，雲端目前為 v${latestRevision}`,
+        code: 'VALUATION_VERSION_CONFLICT',
+        baseRevision: parsed.data.baseRevision,
+        currentRevision: latestRevision,
+      }, 409)
     }
     throw error
   }

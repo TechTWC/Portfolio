@@ -1,4 +1,5 @@
 import type { BootstrapResponse, DatasetDiff, DatasetUpload } from './contracts'
+import { publishPortfolioDataUpdate } from './data-sync'
 import type { DatasetActivationGate } from './dataset-gate'
 import type {
   ValuationBootstrapResponse,
@@ -11,6 +12,8 @@ export class ApiError extends Error {
     message: string,
     readonly status: number,
     readonly code?: string,
+    readonly currentRevision?: number,
+    readonly baseRevision?: number,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -20,11 +23,33 @@ export class ApiError extends Error {
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    cache: 'no-store',
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'no-cache',
+      ...(init?.headers ?? {}),
+    },
   })
-  const body = await response.json().catch(() => ({})) as { error?: string; code?: string }
-  if (!response.ok) throw new ApiError(body.error ?? `HTTP ${response.status}`, response.status, body.code)
+  const body = await response.json().catch(() => ({})) as {
+    error?: string
+    code?: string
+    currentRevision?: number
+    baseRevision?: number
+  }
+  if (!response.ok) {
+    throw new ApiError(
+      body.error ?? `HTTP ${response.status}`,
+      response.status,
+      body.code,
+      body.currentRevision,
+      body.baseRevision,
+    )
+  }
   return body as T
+}
+
+function publishAfterCurrentHandler(update: Parameters<typeof publishPortfolioDataUpdate>[0]) {
+  setTimeout(() => publishPortfolioDataUpdate(update), 0)
 }
 
 export const api = {
@@ -34,11 +59,17 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  activate: (payload: DatasetUpload) =>
-    requestJson<BootstrapResponse>('/api/datasets/activate', {
+  activate: async (payload: DatasetUpload) => {
+    const updated = await requestJson<BootstrapResponse>('/api/datasets/activate', {
       method: 'POST',
       body: JSON.stringify(payload),
-    }),
+    })
+    publishAfterCurrentHandler({
+      kind: 'TRANSACTIONS_ACTIVATED',
+      transactionRevision: updated.cloudRevision,
+    })
+    return updated
+  },
   valuationBootstrap: () =>
     requestJson<ValuationBootstrapResponse>('/api/valuations/bootstrap'),
   valuationPreview: (payload: ValuationSnapshotUpload) =>
@@ -46,9 +77,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  valuationActivate: (payload: ValuationSnapshotUpload) =>
-    requestJson<ValuationBootstrapResponse>('/api/valuations/activate', {
+  valuationActivate: async (payload: ValuationSnapshotUpload) => {
+    const updated = await requestJson<ValuationBootstrapResponse>('/api/valuations/activate', {
       method: 'POST',
       body: JSON.stringify(payload),
-    }),
+    })
+    publishAfterCurrentHandler({
+      kind: 'VALUATION_ACTIVATED',
+      valuationRevision: updated.valuationRevision,
+    })
+    return updated
+  },
 }

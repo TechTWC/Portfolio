@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { parseValuationRows } from '../src/lib/valuation-parser'
+
+const originalTimeZone = process.env.TZ
+
+afterEach(() => {
+  process.env.TZ = originalTimeZone
+})
 
 describe('valuation snapshot parser', () => {
   it('normalizes Taiwan tickers and parses price and FX marks', async () => {
@@ -39,6 +45,25 @@ describe('valuation snapshot parser', () => {
       currency: 'TWD',
       value: 1100,
     })
+  })
+
+  it('preserves Taiwan-local spreadsheet calendar dates without shifting to the previous UTC day', async () => {
+    process.env.TZ = 'Asia/Taipei'
+    const calendarDate = new Date(2026, 5, 30)
+    expect(calendarDate.toISOString().slice(0, 10)).toBe('2026-06-29')
+
+    const result = await parseValuationRows([
+      {
+        估值日: calendarDate,
+        標記日期: calendarDate,
+        類型: 'FX',
+        幣別: 'USD',
+        數值: 33,
+      },
+    ])
+
+    expect(result.valuationDate).toBe('2026-06-30')
+    expect(result.marks[0].markDate).toBe('2026-06-30')
   })
 
   it('rejects a file containing multiple valuation dates', async () => {

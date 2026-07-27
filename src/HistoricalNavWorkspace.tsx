@@ -1,0 +1,258 @@
+import { useEffect, useMemo, useState } from 'react'
+import { api } from './lib/api'
+import type { BootstrapResponse } from './lib/contracts'
+import { deriveHistoricalNavDates } from './lib/historical-nav-schedule'
+import {
+  buildHistoricalPerformanceSeries,
+  type TwrPoint,
+} from './lib/time-weighted-performance'
+import type { ValuationBootstrapResponse } from './lib/valuation-contracts'
+import { toValuationMark } from './lib/valuation-contracts'
+
+function formatAmount(value: number | null): string {
+  if (value === null) return '—'
+  return value.toLocaleString('zh-TW', { maximumFractionDigits: 2 })
+}
+
+function formatPercent(value: number | null): string {
+  if (value === null) return '—'
+  return `${(value * 100).toLocaleString('zh-TW', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
+}
+
+function formatIndex(value: number | null): string {
+  if (value === null) return '—'
+  return value.toLocaleString('zh-TW', { minimumFractionDigits: 4, maximumFractionDigits: 4 })
+}
+
+function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <article className="metric-card">
+      <p>{label}</p>
+      <strong>{value}</strong>
+      {hint && <small>{hint}</small>}
+    </article>
+  )
+}
+
+function LineChart({
+  title,
+  points,
+  valueFor,
+  formatValue,
+  className,
+}: {
+  title: string
+  points: TwrPoint[]
+  valueFor: (point: TwrPoint) => number | null
+  formatValue: (value: number | null) => string
+  className: string
+}) {
+  const valid = points
+    .map((point) => ({ date: point.date, value: valueFor(point) }))
+    .filter((item): item is { date: string; value: number } => item.value !== null && Number.isFinite(item.value))
+
+  if (valid.length < 2) return <div className="empty-state">{title}至少需要兩個完整計算點。</div>
+
+  const width = 960
+  const height = 210
+  const paddingX = 34
+  const paddingY = 26
+  const values = valid.map((item) => item.value)
+  const rawMin = Math.min(...values)
+  const rawMax = Math.max(...values)
+  const min = rawMin === rawMax ? rawMin - 0.01 : rawMin
+  const max = rawMin === rawMax ? rawMax + 0.01 : rawMax
+  const x = (index: number) => paddingX + (index / (valid.length - 1)) * (width - 2 * paddingX)
+  const y = (value: number) => paddingY + ((max - value) / (max - min)) * (height - 2 * paddingY)
+  const coordinates = valid.map((item, index) => `${x(index)},${y(item.value)}`).join(' ')
+
+  return (
+    <article className="historical-chart-card">
+      <div className="historical-chart-heading">
+        <strong>{title}</strong>
+        <span>{valid[0].date} → {valid.at(-1)?.date}</span>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
+        <line x1={paddingX} y1={paddingY} x2={paddingX} y2={height - paddingY} className="historical-chart-axis" />
+        <line x1={paddingX} y1={height - paddingY} x2={width - paddingX} y2={height - paddingY} className="historical-chart-axis" />
+        <polyline points={coordinates} className={className} />
+        {valid.map((item, index) => (
+          <circle key={`${title}-${item.date}`} cx={x(index)} cy={y(item.value)} r="4" className={`${className}-point`}>
+            <title>{item.date}：{formatValue(item.value)}</title>
+          </circle>
+        ))}
+        <text x={paddingX} y="18" className="historical-chart-label">{formatValue(max)}</text>
+        <text x={paddingX} y={height - 6} className="historical-chart-label">{formatValue(min)}</text>
+      </svg>
+    </article>
+  )
+}
+
+export default function HistoricalNavWorkspace() {
+  const [transactions, setTransactions] = useState<BootstrapResponse | null>(null)
+  const [valuation, setValuation] = useState<ValuationBootstrapResponse | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    Promise.all([api.bootstrap(), api.valuationBootstrap()])
+      .then(([transactionData, valuationData]) => {
+        setTransactions(transactionData)
+        setValuation(valuationData)
+      })
+      .catch((loadError) => setError(loadError instanceof Error ? loadError.message : String(loadError)))
+  }, [])
+
+  const result = useMemo(() => {
+    if (!transactions || !valuation) return null
+    const marks = valuation.marks.map(toValuationMark)
+    const activeValuationDate = valuation.activeSnapshot?.valuationDate ?? null
+    const dates = deriveHistoricalNavDates(
+      marks,
+      activeValuationDate,
+      transactions.transactions,
+    )
+    return buildHistoricalPerformanceSeries({
+      transactions: transactions.transactions,
+      marks,
+      dates,
+      transactionRevision: transactions.cloudRevision,
+      valuationRevision: valuation.valuationRevision,
+      valuationSnapshotId: valuation.activeSnapshot?.id ?? null,
+      valuationDate: activeValuationDate,
+    })
+  }, [transactions, valuation])
+
+  const series = result?.navSeries ?? null
+  const performance = result?.performance ?? null
+  const provenance = result?.provenance ?? null
+  const pointByDate = useMemo(
+    () => new Map(series?.points.map((point) => [point.asOfDate, point]) ?? []),
+    [series],
+  )
+
+  return (
+    <section className="panel" id="historical-nav">
+      <div className="panel-heading"><div>
+        <span>HISTORICAL NAV · TWR · DRAWDOWN · v0.6</span>
+        <h2>歷史資產、時間加權報酬與回撤</h2>
+        <p>每個日期都重新播放當日以前的交易，並只使用當日或更早的價格與匯率。TWR 會排除外部入出金影響；最大回撤與目前回撤分開呈現。</p>
+      </div></div>
+
+      {error && <div className="banner error">{error}</div>}
+      {!series || !performance || !provenance ? <div className="empty-state">正在重建歷史 NAV 與績效…</div> : (
+        <>
+          <div className="metrics-grid">
+            <Metric label="績效狀態" value={performance.complete ? '完整' : '待補資料'} hint={performance.complete ? 'NAV、TWR 與回撤可追溯' : `${performance.blockingIssueCount} 項績效阻擋問題`} />
+            <Metric label="歷史觀察點" value={performance.points.length.toLocaleString()} hint="含期初、PRICE／FX 日期、外部資金流與 ACTIVE 估值日" />
+            <Metric label="完整 NAV 點" value={series.completePointCount.toLocaleString()} />
+            <Metric label="不完整 NAV 點" value={series.incompletePointCount.toLocaleString()} hint={series.incompletePointCount > 0 ? '缺少價格、匯率或帳務資料' : '所有觀察點可完整估值'} />
+          </div>
+
+          <div className="empty-state">
+            交易 v{provenance.transactionRevision}｜估值 v{provenance.valuationRevision}
+            ｜估值 Snapshot {provenance.valuationSnapshotId ?? '—'}
+            ｜估值日 {provenance.valuationDate ?? '—'}
+            ｜計算 {provenance.calculationVersion}
+          </div>
+
+          <div className="metrics-grid">
+            <Metric label="累積 TWR" value={formatPercent(performance.cumulativeTwr)} hint="排除外部入出金後的幾何鏈結報酬" />
+            <Metric label="年化 TWR" value={formatPercent(performance.annualizedTwr)} hint={performance.dayCount === null ? '—' : `Actual/365，共 ${performance.dayCount} 天`} />
+            <Metric label="最大回撤" value={formatPercent(performance.drawdown.maximumDrawdown)} hint={performance.drawdown.peakDate && performance.drawdown.troughDate ? `${performance.drawdown.peakDate} → ${performance.drawdown.troughDate}` : '—'} />
+            <Metric label="目前回撤" value={formatPercent(performance.drawdown.currentDrawdown)} hint={performance.drawdown.currentlyInDrawdown ? `仍在回撤，已 ${performance.drawdown.currentUnderwaterDays ?? 0} 天` : '目前已回到歷史高點'} />
+          </div>
+
+          <div className="metrics-grid">
+            <Metric label="最大回撤高點" value={performance.drawdown.peakDate ?? '—'} />
+            <Metric label="最大回撤低點" value={performance.drawdown.troughDate ?? '—'} hint={performance.drawdown.declineDays === null ? undefined : `下跌歷時 ${performance.drawdown.declineDays} 天`} />
+            <Metric label="修復日期" value={performance.drawdown.recoveryDate ?? '尚未修復'} hint={performance.drawdown.recoveryDays === null ? undefined : `低點後 ${performance.drawdown.recoveryDays} 天`} />
+            <Metric label="水下期間" value={performance.drawdown.underwaterDays === null ? '—' : `${performance.drawdown.underwaterDays} 天`} hint="自前高至修復；未修復則算到最新點" />
+          </div>
+
+          {performance.complete && (
+            <div className="historical-chart-grid">
+              <LineChart
+                title="TWR 累積淨值指數"
+                points={performance.points}
+                valueFor={(point) => point.growthIndex}
+                formatValue={formatIndex}
+                className="historical-chart-growth"
+              />
+              <LineChart
+                title="回撤序列"
+                points={performance.points}
+                valueFor={(point) => point.drawdown}
+                formatValue={formatPercent}
+                className="historical-chart-drawdown"
+              />
+            </div>
+          )}
+
+          <div className="panel-heading"><div>
+            <span>AUDITABLE NAV & RETURN CHAIN</span>
+            <h2>歷史 NAV、外部資金流與區間報酬</h2>
+            <p>當日投入視為期初資金，當日出金視為期末取回；因此單純入金或出金不會被誤認為投資報酬。</p>
+          </div></div>
+
+          {performance.points.length === 0 ? <div className="empty-state">目前沒有可用的歷史觀察日期。</div> : (
+            <div className="table-wrap"><table>
+              <thead><tr>
+                <th>日期</th><th>狀態</th>
+                <th className="numeric">TWD NAV</th>
+                <th className="numeric">持倉市值</th>
+                <th className="numeric">現金價值</th>
+                <th className="numeric">當日投入</th>
+                <th className="numeric">當日出金</th>
+                <th className="numeric">單期報酬</th>
+                <th className="numeric">累積 TWR</th>
+                <th className="numeric">淨值指數</th>
+                <th className="numeric">回撤</th>
+                <th>價格／匯率日期</th><th>問題</th>
+              </tr></thead>
+              <tbody>{performance.points.map((point) => {
+                const navPoint = pointByDate.get(point.date)
+                return (
+                  <tr key={point.date}>
+                    <td>{point.date}</td>
+                    <td>{point.complete ? '完整' : '不完整'}</td>
+                    <td className="numeric">{formatAmount(point.totalAssetsTwd)}</td>
+                    <td className="numeric">{formatAmount(navPoint?.positionValueTwd ?? null)}</td>
+                    <td className="numeric">{formatAmount(navPoint?.cashValueTwd ?? null)}</td>
+                    <td className="numeric">{formatAmount(point.contributionTwd)}</td>
+                    <td className="numeric">{formatAmount(point.withdrawalTwd)}</td>
+                    <td className="numeric">{formatPercent(point.periodReturn)}</td>
+                    <td className="numeric">{formatPercent(point.cumulativeTwr)}</td>
+                    <td className="numeric">{formatIndex(point.growthIndex)}</td>
+                    <td className="numeric">{formatPercent(point.drawdown)}</td>
+                    <td>{navPoint ? `${navPoint.latestPriceDateUsed ?? '—'}／${navPoint.latestFxDateUsed ?? '—'}` : '—'}</td>
+                    <td>{navPoint?.issues.length ? navPoint.issues.map((issue) => issue.code).join('、') : '—'}</td>
+                  </tr>
+                )
+              })}</tbody>
+            </table></div>
+          )}
+
+          {performance.issues.length > 0 && (
+            <div className="rejected-list">
+              <strong>歷史績效尚不能完整計算</strong>
+              <ul>{performance.issues.map((issue, index) => (
+                <li key={`${issue.code}-${index}`}>{issue.code}：{issue.message}{issue.dates.length ? `（${issue.dates.join('、')}）` : ''}</li>
+              ))}</ul>
+            </div>
+          )}
+
+          {series.issues.length > 0 && (
+            <div className="rejected-list">
+              <strong>歷史 NAV 日期設定有問題</strong>
+              <ul>{series.issues.map((issue, index) => <li key={`${issue.code}-${index}`}>{issue.code}：{issue.message}</li>)}</ul>
+            </div>
+          )}
+
+          <div className="empty-state">
+            本頁使用目前雲端保存的歷史價格與匯率標記。觀察點越密集，回撤日期與修復期越精確；尚未加入日資料前，不宣稱這是每日最大回撤。
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
