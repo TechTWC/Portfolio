@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'agent/cloud-bootstrap-v0-1' || github.head_ref == 'agent/valuation-v0-3' || github.head_ref == 'agent/fx-cost-pool-v0-4' || github.head_ref == 'agent/performance-xirr-v0-5' || github.head_ref == 'agent/historical-nav-v0-6'))
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'agent/cloud-bootstrap-v0-1' || github.head_ref == 'agent/valuation-v0-3' || github.head_ref == 'agent/fx-cost-pool-v0-4' || github.head_ref == 'agent/performance-xirr-v0-5' || github.head_ref == 'agent/historical-nav-v0-6' || github.head_ref == 'agent/security-dependency-remediation-v0-7'))
     name: Resolve Access, migrate and deploy
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -35,6 +35,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
       - name: Check Cloudflare credentials
         shell: bash
@@ -43,7 +44,9 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID" || (echo "Missing CLOUDFLARE_ACCOUNT_ID" && exit 1)
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          sha256sum --check vendor/SHA256SUMS
+          npm ci
 
       - name: Validate application
         run: |

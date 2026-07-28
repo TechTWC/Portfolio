@@ -4,6 +4,11 @@ import {
   normalizedValuationMarkSchema,
   type NormalizedValuationMark,
 } from './valuation-contracts'
+import {
+  assertSpreadsheetFileSize,
+  assertSpreadsheetRowCount,
+  MAX_SPREADSHEET_ROWS,
+} from './spreadsheet-safety'
 
 export const VALUATION_PARSER_VERSION = 'valuation-v0.3.1'
 
@@ -134,6 +139,7 @@ export async function parseValuationRows(
   fileHash = '0'.repeat(64),
 ): Promise<ValuationParseResult> {
   if (rows.length === 0) throw new Error('檔案沒有價格或匯率資料')
+  assertSpreadsheetRowCount(rows)
 
   const valuationDates = new Set<string>()
   for (const row of rows) {
@@ -188,11 +194,16 @@ export async function parseValuationRows(
 }
 
 export async function parseValuationFile(file: File): Promise<ValuationParseResult> {
+  assertSpreadsheetFileSize(file)
   const buffer = await file.arrayBuffer()
   const fileHash = await sha256Hex(buffer)
   // Keep spreadsheet calendar dates as raw strings or serial numbers. Converting
   // them to JS Date objects can introduce browser-timezone date shifts.
-  const workbook = XLSX.read(buffer, { type: 'array', cellDates: false })
+  const workbook = XLSX.read(buffer, {
+    type: 'array',
+    cellDates: false,
+    sheetRows: MAX_SPREADSHEET_ROWS + 2,
+  })
   const firstSheet = workbook.SheetNames[0]
   if (!firstSheet) throw new Error('檔案沒有可讀取的工作表')
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[firstSheet], {

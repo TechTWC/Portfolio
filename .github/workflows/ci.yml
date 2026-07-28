@@ -13,7 +13,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+          cache: npm
+      - name: Verify vendored dependency checksum
+        run: sha256sum --check vendor/SHA256SUMS
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Audit production dependencies
+        run: npm run audit:production
+      - name: Audit all dependencies
+        run: npm run audit:all
       - run: npm test
       - name: Typecheck
         shell: bash

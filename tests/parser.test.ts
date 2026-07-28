@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { parseTransactionRows } from '../src/lib/parser'
+import * as XLSX from 'xlsx'
+import { parseTransactionFile, parseTransactionRows } from '../src/lib/parser'
+import {
+  MAX_SPREADSHEET_FILE_BYTES,
+  MAX_SPREADSHEET_ROWS,
+} from '../src/lib/spreadsheet-safety'
+
+function workbookFile(bookType: 'xlsx' | 'xls', rows: unknown[][]): File {
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), 'Transactions')
+  const bytes = XLSX.write(workbook, { bookType, type: 'array' })
+  return new File([bytes], `synthetic.${bookType}`)
+}
 
 describe('transaction parser', () => {
   it('converts a positive SELL quantity to a negative security quantity', async () => {
@@ -40,5 +52,65 @@ describe('transaction parser', () => {
     await expect(parseTransactionRows([
       { 日期: '2026-01-01', 交易類型: 'CASH_IN', 幣別: 'USD', 原幣金額: 100 },
     ])).rejects.toThrow('所有資料列都未通過驗證')
+  })
+
+  it.each(['xlsx', 'xls'] as const)('parses a synthetic %s workbook without changing the financial result', async (bookType) => {
+    const file = workbookFile(bookType, [
+      ['日期', '交易類型', '股票代號', '購買股數', '購買股價', '幣別'],
+      ['2026-01-02', 'BUY', '2330', 2, 100, 'TWD'],
+    ])
+
+    const result = await parseTransactionFile(file)
+
+    expect(result.rejected).toHaveLength(0)
+    expect(result.transactions).toHaveLength(1)
+    expect(result.transactions[0]).toMatchObject({
+      tradeDate: '2026-01-02',
+      ticker: '2330.TW',
+      quantity: 2,
+      amountForeign: 200,
+    })
+  })
+
+  it('parses an Excel serial date and preserves the source row for malformed input', async () => {
+    const result = await parseTransactionRows([
+      { 日期: 46023, 交易類型: 'BUY', 股票代號: '2330', 購買股數: 1, 購買股價: 100, 幣別: 'TWD' },
+      { 日期: '2026-01-02', 交易類型: 'BUY', 股票代號: '', 購買股數: 1, 購買股價: 100, 幣別: 'TWD' },
+    ])
+
+    expect(result.transactions[0].tradeDate).toBe('2026-01-01')
+    expect(result.rejected).toEqual([
+      { sourceRowNumber: 3, reason: '第 3 列缺少股票代號' },
+    ])
+  })
+
+  it('does not allow a prototype-key workbook to modify object prototypes', async () => {
+    const file = workbookFile('xlsx', [
+      ['日期', '交易類型', '股票代號', '購買股數', '購買股價', '幣別', '__proto__'],
+      ['2026-01-02', 'BUY', '2330', 1, 100, 'TWD', 'polluted'],
+    ])
+
+    const result = await parseTransactionFile(file)
+
+    expect(result.transactions).toHaveLength(1)
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+  })
+
+  it('rejects an oversized workbook before reading its contents', async () => {
+    const file = new File(
+      [new Uint8Array(MAX_SPREADSHEET_FILE_BYTES + 1)],
+      'oversized.xlsx',
+    )
+
+    await expect(parseTransactionFile(file)).rejects.toThrow('試算表檔案過大')
+  })
+
+  it('rejects row input above the processing bound', async () => {
+    const rows = Array.from(
+      { length: MAX_SPREADSHEET_ROWS + 1 },
+      () => ({ 日期: '2026-01-01' }),
+    )
+
+    await expect(parseTransactionRows(rows)).rejects.toThrow('試算表資料列過多')
   })
 })

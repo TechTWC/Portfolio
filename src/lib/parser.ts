@@ -2,6 +2,11 @@ import * as XLSX from 'xlsx'
 import type { NormalizedTransaction } from './contracts'
 import { normalizedTransactionSchema } from './contracts'
 import { sha256Hex, stableTransactionValue } from './hash'
+import {
+  assertSpreadsheetFileSize,
+  assertSpreadsheetRowCount,
+  MAX_SPREADSHEET_ROWS,
+} from './spreadsheet-safety'
 
 export const PARSER_VERSION = 'cloud-v0.1.0'
 
@@ -197,6 +202,7 @@ export async function parseTransactionRows(
   fileHash = '0'.repeat(64),
 ): Promise<ParseResult> {
   if (rows.length === 0) throw new Error('檔案沒有交易資料')
+  assertSpreadsheetRowCount(rows)
 
   const transactions: NormalizedTransaction[] = []
   const rejected: ParseResult['rejected'] = []
@@ -243,9 +249,14 @@ export async function parseTransactionRows(
 }
 
 export async function parseTransactionFile(file: File): Promise<ParseResult> {
+  assertSpreadsheetFileSize(file)
   const buffer = await file.arrayBuffer()
   const fileHash = await sha256Hex(buffer)
-  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true })
+  const workbook = XLSX.read(buffer, {
+    type: 'array',
+    cellDates: true,
+    sheetRows: MAX_SPREADSHEET_ROWS + 2,
+  })
   const firstSheet = workbook.SheetNames[0]
   if (!firstSheet) throw new Error('檔案沒有可讀取的工作表')
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[firstSheet], {
