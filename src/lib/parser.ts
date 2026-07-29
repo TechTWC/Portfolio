@@ -10,6 +10,8 @@ import {
 
 export const PARSER_VERSION = 'cloud-v0.1.0'
 
+const INVALID_EXCEL_FILE_MESSAGE = 'Excel 檔案損壞或副檔名與格式不符；請確認檔案可正常開啟後重新上傳'
+
 const COLUMN_ALIASES: Record<string, string[]> = {
   tradeDate: ['日期', '交易日期', 'date', 'datetime', 'trade_date'],
   transactionType: ['交易類型', '交易类型', 'type', 'trade_type', 'transaction_type'],
@@ -57,6 +59,25 @@ const TYPE_ALIASES: Record<string, NormalizedTransaction['transactionType']> = {
 
 function normalizeHeader(value: string): string {
   return value.trim().toLowerCase().replaceAll(' ', '').replaceAll('_', '')
+}
+
+function hasPrefix(bytes: Uint8Array, prefix: number[]): boolean {
+  return prefix.every((value, index) => bytes[index] === value)
+}
+
+function assertExcelContainerMatchesExtension(file: File, buffer: ArrayBuffer): void {
+  const extension = file.name.toLowerCase().match(/\.([^.]+)$/)?.[1]
+  const bytes = new Uint8Array(buffer)
+
+  if (extension === 'xlsx' && !hasPrefix(bytes, [0x50, 0x4b, 0x03, 0x04])) {
+    throw new Error(INVALID_EXCEL_FILE_MESSAGE)
+  }
+
+  if (extension === 'xls') {
+    const isCompoundBinary = hasPrefix(bytes, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])
+    const isRawBiff = bytes[0] === 0x09 && [0x00, 0x02, 0x04, 0x08].includes(bytes[1])
+    if (!isCompoundBinary && !isRawBiff) throw new Error(INVALID_EXCEL_FILE_MESSAGE)
+  }
 }
 
 function keyFor(row: Record<string, unknown>, canonical: string): unknown {
@@ -252,13 +273,19 @@ export async function parseTransactionFile(file: File): Promise<ParseResult> {
   assertSpreadsheetFileSize(file)
   const buffer = await file.arrayBuffer()
   const fileHash = await sha256Hex(buffer)
-  const workbook = XLSX.read(buffer, {
-    type: 'array',
-    cellDates: true,
-    sheetRows: MAX_SPREADSHEET_ROWS + 2,
-  })
+  assertExcelContainerMatchesExtension(file, buffer)
+  let workbook: XLSX.WorkBook
+  try {
+    workbook = XLSX.read(buffer, {
+      type: 'array',
+      cellDates: true,
+      sheetRows: MAX_SPREADSHEET_ROWS + 2,
+    })
+  } catch {
+    throw new Error(INVALID_EXCEL_FILE_MESSAGE)
+  }
   const firstSheet = workbook.SheetNames[0]
-  if (!firstSheet) throw new Error('檔案沒有可讀取的工作表')
+  if (!firstSheet) throw new Error(INVALID_EXCEL_FILE_MESSAGE)
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[firstSheet], {
     defval: '',
     raw: true,

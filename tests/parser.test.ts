@@ -72,6 +72,17 @@ describe('transaction parser', () => {
     })
   })
 
+  it.each(['xlsx', 'xls'] as const)('reports a corrupted %s file as a file-format error', async (bookType) => {
+    const file = new File(
+      ['This is not an Excel workbook.'],
+      `corrupted.${bookType}`,
+    )
+
+    await expect(parseTransactionFile(file)).rejects.toThrow(
+      'Excel 檔案損壞或副檔名與格式不符',
+    )
+  })
+
   it('parses an Excel serial date and preserves the source row for malformed input', async () => {
     const result = await parseTransactionRows([
       { 日期: 46023, 交易類型: 'BUY', 股票代號: '2330', 購買股數: 1, 購買股價: 100, 幣別: 'TWD' },
