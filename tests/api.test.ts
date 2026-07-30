@@ -40,7 +40,7 @@ afterEach(() => {
 })
 
 describe('dataset API activation', () => {
-  it('activates after a successful Excel preview using the same authenticated origin', async () => {
+  it('activates after a successful Excel preview', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
         diff: { unchanged: false },
@@ -57,7 +57,6 @@ describe('dataset API activation', () => {
     await expect(api.activate(payload)).resolves.toMatchObject({ cloudRevision: 7 })
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/datasets/activate', expect.objectContaining({
       method: 'POST',
-      credentials: 'same-origin',
       body: JSON.stringify(payload),
     }))
   })
@@ -76,7 +75,7 @@ describe('dataset API activation', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
 
     await expect(api.bootstrap()).rejects.toEqual(expect.objectContaining({
-      message: expect.stringContaining('請確認網路與 Cloudflare Access 登入狀態後重試'),
+      message: expect.stringContaining('更新結果尚未確認，請重新登入 Access 並重新同步確認'),
       code: 'NETWORK_OR_ACCESS_ERROR',
       status: 0,
     }))

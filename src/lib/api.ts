@@ -26,7 +26,6 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
     response = await fetch(url, {
       ...init,
       cache: 'no-store',
-      credentials: 'same-origin',
       headers: {
         'content-type': 'application/json',
         'cache-control': 'no-cache',
@@ -38,7 +37,7 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
       ? `（${error.message}）`
       : ''
     throw new ApiError(
-      `無法連線至雲端 API ${url}；請確認網路與 Cloudflare Access 登入狀態後重試${detail}。舊的 ACTIVE 資料未被更新。`,
+      `無法連線至雲端 API ${url}${detail}。更新結果尚未確認，請重新登入 Access 並重新同步確認。`,
       0,
       'NETWORK_OR_ACCESS_ERROR',
     )
