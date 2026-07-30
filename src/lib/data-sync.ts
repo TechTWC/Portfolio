@@ -11,6 +11,10 @@ export type PortfolioDataUpdate = {
 const DOM_EVENT_NAME = 'portfolio-analyzer:data-updated'
 const BROADCAST_CHANNEL_NAME = 'portfolio-analyzer-data-updated'
 
+function browserEventTarget(): EventTarget | null {
+  return 'document' in globalThis ? globalThis : null
+}
+
 function createEventId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
@@ -27,9 +31,7 @@ export function publishPortfolioDataUpdate(
     occurredAt: new Date().toISOString(),
   }
 
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent<PortfolioDataUpdate>(DOM_EVENT_NAME, { detail: message }))
-  }
+  browserEventTarget()?.dispatchEvent(new CustomEvent<PortfolioDataUpdate>(DOM_EVENT_NAME, { detail: message }))
 
   if (typeof BroadcastChannel !== 'undefined') {
     const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME)
@@ -59,9 +61,8 @@ export function subscribePortfolioDataUpdates(
     deliver((event as CustomEvent<PortfolioDataUpdate>).detail)
   }
 
-  if (typeof window !== 'undefined') {
-    window.addEventListener(DOM_EVENT_NAME, domHandler)
-  }
+  const eventTarget = browserEventTarget()
+  eventTarget?.addEventListener(DOM_EVENT_NAME, domHandler)
 
   const channel = typeof BroadcastChannel !== 'undefined'
     ? new BroadcastChannel(BROADCAST_CHANNEL_NAME)
@@ -69,9 +70,7 @@ export function subscribePortfolioDataUpdates(
   if (channel) channel.onmessage = (event: MessageEvent<PortfolioDataUpdate>) => deliver(event.data)
 
   return () => {
-    if (typeof window !== 'undefined') {
-      window.removeEventListener(DOM_EVENT_NAME, domHandler)
-    }
+    eventTarget?.removeEventListener(DOM_EVENT_NAME, domHandler)
     channel?.close()
   }
 }

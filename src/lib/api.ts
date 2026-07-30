@@ -21,15 +21,28 @@ export class ApiError extends Error {
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    cache: 'no-store',
-    headers: {
-      'content-type': 'application/json',
-      'cache-control': 'no-cache',
-      ...(init?.headers ?? {}),
-    },
-  })
+  let response: Response
+  try {
+    response = await fetch(url, {
+      ...init,
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: {
+        'content-type': 'application/json',
+        'cache-control': 'no-cache',
+        ...(init?.headers ?? {}),
+      },
+    })
+  } catch (error) {
+    const detail = error instanceof Error && error.message !== 'Failed to fetch'
+      ? `（${error.message}）`
+      : ''
+    throw new ApiError(
+      `無法連線至雲端 API ${url}；請確認網路與 Cloudflare Access 登入狀態後重試${detail}。舊的 ACTIVE 資料未被更新。`,
+      0,
+      'NETWORK_OR_ACCESS_ERROR',
+    )
+  }
   const body = await response.json().catch(() => ({})) as {
     error?: string
     code?: string
