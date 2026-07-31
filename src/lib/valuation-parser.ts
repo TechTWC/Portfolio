@@ -8,10 +8,10 @@ import {
   assertSpreadsheetFileSize,
   assertSpreadsheetRowCount,
   assertWorksheetWasNotTruncated,
-  MAX_SPREADSHEET_ROWS,
+  MAX_SPREADSHEET_ROWS_TO_READ,
 } from './spreadsheet-safety'
 
-export const VALUATION_PARSER_VERSION = 'valuation-v0.3.3'
+export const VALUATION_PARSER_VERSION = 'valuation-v0.3.4'
 
 const COLUMN_ALIASES: Record<string, string[]> = {
   valuationDate: ['估值日', '評價日', '评价日', 'valuation_date', 'valuationdate', 'as_of_date', 'asofdate'],
@@ -203,7 +203,7 @@ export async function parseValuationFile(file: File): Promise<ValuationParseResu
   const workbook = XLSX.read(buffer, {
     type: 'array',
     cellDates: false,
-    sheetRows: MAX_SPREADSHEET_ROWS + 2,
+    sheetRows: MAX_SPREADSHEET_ROWS_TO_READ,
   })
   const firstSheet = workbook.SheetNames[0]
   if (!firstSheet) throw new Error('檔案沒有可讀取的工作表')

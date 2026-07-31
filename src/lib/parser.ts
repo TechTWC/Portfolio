@@ -6,10 +6,10 @@ import {
   assertSpreadsheetFileSize,
   assertSpreadsheetRowCount,
   assertWorksheetWasNotTruncated,
-  MAX_SPREADSHEET_ROWS,
+  MAX_SPREADSHEET_ROWS_TO_READ,
 } from './spreadsheet-safety'
 
-export const PARSER_VERSION = 'cloud-v0.1.2'
+export const PARSER_VERSION = 'cloud-v0.1.3'
 
 const INVALID_EXCEL_FILE_MESSAGE = 'Excel 檔案損壞或副檔名與格式不符；請確認檔案可正常開啟後重新上傳'
 
@@ -280,7 +280,7 @@ export async function parseTransactionFile(file: File): Promise<ParseResult> {
     workbook = XLSX.read(buffer, {
       type: 'array',
       cellDates: true,
-      sheetRows: MAX_SPREADSHEET_ROWS + 2,
+      sheetRows: MAX_SPREADSHEET_ROWS_TO_READ,
     })
   } catch {
     throw new Error(INVALID_EXCEL_FILE_MESSAGE)

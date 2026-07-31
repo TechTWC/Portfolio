@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import * as XLSX from 'xlsx'
 import { parseTransactionFile, parseTransactionRows } from '../src/lib/parser'
 import {
+  assertWorksheetWasNotTruncated,
   MAX_SPREADSHEET_FILE_BYTES,
   MAX_SPREADSHEET_ROWS,
+  MAX_SPREADSHEET_ROWS_TO_READ,
 } from '../src/lib/spreadsheet-safety'
 
 function workbookFile(bookType: 'xlsx' | 'xls', rows: unknown[][]): File {
@@ -11,6 +13,13 @@ function workbookFile(bookType: 'xlsx' | 'xls', rows: unknown[][]): File {
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), 'Transactions')
   const bytes = XLSX.write(workbook, { bookType, type: 'array', compression: true })
   return new File([bytes], `synthetic.${bookType}`)
+}
+
+function csvFile(name: string, rows: unknown[][]): File {
+  const contents = rows
+    .map((row) => row.map((value) => String(value ?? '')).join(','))
+    .join('\n')
+  return new File([contents], name, { type: 'text/csv' })
 }
 
 describe('transaction parser', () => {
@@ -134,6 +143,39 @@ describe('transaction parser', () => {
     ])
 
     await expect(parseTransactionFile(file)).rejects.toThrow('試算表資料列過多；上限為 50,000 列')
+  }, 30_000)
+
+  it('rejects a truncated CSV when SheetJS omits the original range', async () => {
+    const header = ['日期', '交易類型', '股票代號', '購買股數', '購買股價', '幣別']
+    const dataRow = ['2026-01-02', 'BUY', '2330', 1, 100, 'TWD']
+    const file = csvFile('transactions.csv', [
+      header,
+      dataRow,
+      [],
+      ...Array.from({ length: MAX_SPREADSHEET_ROWS }, () => dataRow),
+    ])
+
+    await expect(parseTransactionFile(file)).rejects.toThrow('試算表資料列過多；上限為 50,000 列')
+  }, 30_000)
+
+  it('accepts a normal CSV with a blank row and does not flag the exact CSV boundary', async () => {
+    const header = ['日期', '交易類型', '股票代號', '購買股數', '購買股價', '幣別']
+    const dataRow = ['2026-01-02', 'BUY', '2330', 1, 100, 'TWD']
+    const normal = csvFile('transactions-normal.csv', [header, dataRow, [], dataRow])
+    await expect(parseTransactionFile(normal)).resolves.toMatchObject({ sourceRowCount: 2 })
+
+    const boundary = csvFile('transactions-boundary.csv', [
+      header,
+      ...Array.from({ length: MAX_SPREADSHEET_ROWS }, () => dataRow),
+    ])
+    const workbook = XLSX.read(await boundary.arrayBuffer(), {
+      type: 'array',
+      cellDates: true,
+      sheetRows: MAX_SPREADSHEET_ROWS_TO_READ,
+    })
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]]
+    expect(worksheet['!fullref']).toBeUndefined()
+    expect(() => assertWorksheetWasNotTruncated(worksheet)).not.toThrow()
   }, 30_000)
 
   it('parses a normal workbook with a blank row and the exact supported boundary', async () => {

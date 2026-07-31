@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx'
 
 export const MAX_SPREADSHEET_FILE_BYTES = 10 * 1024 * 1024
 export const MAX_SPREADSHEET_ROWS = 50_000
+export const MAX_SPREADSHEET_ROWS_TO_READ = MAX_SPREADSHEET_ROWS + 2
 
 const SPREADSHEET_ROW_LIMIT_MESSAGE = `試算表資料列過多；上限為 ${MAX_SPREADSHEET_ROWS.toLocaleString('en-US')} 列`
 
@@ -17,22 +18,41 @@ export function assertSpreadsheetRowCount(rows: unknown[]): void {
   }
 }
 
+function spreadsheetRowLimitError(): Error {
+  return new Error(`${SPREADSHEET_ROW_LIMIT_MESSAGE}；請移除多餘、空白或已格式化的資料列後重試`)
+}
+
 export function assertWorksheetWasNotTruncated(worksheet: XLSX.WorkSheet): void {
   const cappedRange = worksheet['!ref']
   const originalRange = worksheet['!fullref']
-  if (!originalRange || originalRange === cappedRange) return
+  if (!cappedRange && !originalRange) return
 
-  let extendsBeyondCap: boolean
+  let cappedEndRow: number
   try {
-    extendsBeyondCap = !cappedRange
-      || XLSX.utils.decode_range(originalRange).e.r > XLSX.utils.decode_range(cappedRange).e.r
+    cappedEndRow = cappedRange ? XLSX.utils.decode_range(cappedRange).e.r : -1
   } catch {
-    // If SheetJS reports a different original range but it cannot be safely
-    // compared with the capped range, do not accept a potentially partial file.
-    throw new Error(`${SPREADSHEET_ROW_LIMIT_MESSAGE}；請移除多餘、空白或已格式化的資料列後重試`)
+    throw spreadsheetRowLimitError()
   }
 
-  if (extendsBeyondCap) {
-    throw new Error(`${SPREADSHEET_ROW_LIMIT_MESSAGE}；請移除多餘、空白或已格式化的資料列後重試`)
+  if (!originalRange) {
+    // SheetJS 0.20.3 does not expose !fullref for capped CSV input. Reaching
+    // sheetRows means the parser cannot prove that no later record was omitted.
+    if (cappedEndRow + 1 >= MAX_SPREADSHEET_ROWS_TO_READ) {
+      throw spreadsheetRowLimitError()
+    }
+    return
+  }
+
+  if (originalRange === cappedRange) return
+
+  let originalEndRow: number
+  try {
+    originalEndRow = XLSX.utils.decode_range(originalRange).e.r
+  } catch {
+    throw spreadsheetRowLimitError()
+  }
+
+  if (!cappedRange || originalEndRow > cappedEndRow) {
+    throw spreadsheetRowLimitError()
   }
 }

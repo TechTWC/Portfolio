@@ -11,6 +11,13 @@ function workbookFile(rows: unknown[][]): File {
   return new File([XLSX.write(workbook, { bookType: 'xlsx', type: 'array', compression: true })], 'valuations.xlsx')
 }
 
+function csvFile(rows: unknown[][]): File {
+  const contents = rows
+    .map((row) => row.map((value) => String(value ?? '')).join(','))
+    .join('\n')
+  return new File([contents], 'valuations.csv', { type: 'text/csv' })
+}
+
 afterEach(() => {
   process.env.TZ = originalTimeZone
 })
@@ -110,6 +117,27 @@ describe('valuation snapshot parser', () => {
 
     await expect(parseValuationFile(file)).rejects.toThrow('試算表資料列過多；上限為 50,000 列')
   }, 30_000)
+
+  it('rejects a truncated CSV when SheetJS omits the original range', async () => {
+    const header = ['估值日', '標記日期', '類型', '股票代號', '幣別', '數值']
+    const dataRow = ['2026-06-30', '2026-06-30', 'FX', '', 'USD', 33]
+    const file = csvFile([
+      header,
+      dataRow,
+      [],
+      ...Array.from({ length: MAX_SPREADSHEET_ROWS }, () => dataRow),
+    ])
+
+    await expect(parseValuationFile(file)).rejects.toThrow('試算表資料列過多；上限為 50,000 列')
+  }, 30_000)
+
+  it('parses a normal CSV containing a blank row', async () => {
+    const header = ['估值日', '標記日期', '類型', '股票代號', '幣別', '數值']
+    const dataRow = ['2026-06-30', '2026-06-30', 'FX', '', 'USD', 33]
+    const file = csvFile([header, dataRow, [], dataRow])
+
+    await expect(parseValuationFile(file)).resolves.toMatchObject({ sourceRowCount: 2 })
+  })
 
   it('parses a normal workbook with a blank row and the exact supported boundary', async () => {
     const dataRow = ['2026-06-30', '2026-06-30', 'FX', '', 'USD', 33]
