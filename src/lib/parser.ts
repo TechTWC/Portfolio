@@ -8,7 +8,7 @@ import {
   MAX_SPREADSHEET_ROWS,
 } from './spreadsheet-safety'
 
-export const PARSER_VERSION = 'cloud-v0.1.0'
+export const PARSER_VERSION = 'cloud-v0.1.1'
 
 const INVALID_EXCEL_FILE_MESSAGE = 'Excel 檔案損壞或副檔名與格式不符；請確認檔案可正常開啟後重新上傳'
 

@@ -10,7 +10,7 @@ import {
   MAX_SPREADSHEET_ROWS,
 } from './spreadsheet-safety'
 
-export const VALUATION_PARSER_VERSION = 'valuation-v0.3.1'
+export const VALUATION_PARSER_VERSION = 'valuation-v0.3.2'
 
 const COLUMN_ALIASES: Record<string, string[]> = {
   valuationDate: ['估值日', '評價日', '评价日', 'valuation_date', 'valuationdate', 'as_of_date', 'asofdate'],
