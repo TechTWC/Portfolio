@@ -5,10 +5,11 @@ import { sha256Hex, stableTransactionValue } from './hash'
 import {
   assertSpreadsheetFileSize,
   assertSpreadsheetRowCount,
+  assertWorksheetWasNotTruncated,
   MAX_SPREADSHEET_ROWS,
 } from './spreadsheet-safety'
 
-export const PARSER_VERSION = 'cloud-v0.1.1'
+export const PARSER_VERSION = 'cloud-v0.1.2'
 
 const INVALID_EXCEL_FILE_MESSAGE = 'Excel 檔案損壞或副檔名與格式不符；請確認檔案可正常開啟後重新上傳'
 
@@ -286,7 +287,9 @@ export async function parseTransactionFile(file: File): Promise<ParseResult> {
   }
   const firstSheet = workbook.SheetNames[0]
   if (!firstSheet) throw new Error(INVALID_EXCEL_FILE_MESSAGE)
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[firstSheet], {
+  const worksheet = workbook.Sheets[firstSheet]
+  assertWorksheetWasNotTruncated(worksheet)
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
     defval: '',
     raw: true,
   })

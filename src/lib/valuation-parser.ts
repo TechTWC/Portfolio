@@ -7,10 +7,11 @@ import {
 import {
   assertSpreadsheetFileSize,
   assertSpreadsheetRowCount,
+  assertWorksheetWasNotTruncated,
   MAX_SPREADSHEET_ROWS,
 } from './spreadsheet-safety'
 
-export const VALUATION_PARSER_VERSION = 'valuation-v0.3.2'
+export const VALUATION_PARSER_VERSION = 'valuation-v0.3.3'
 
 const COLUMN_ALIASES: Record<string, string[]> = {
   valuationDate: ['估值日', '評價日', '评价日', 'valuation_date', 'valuationdate', 'as_of_date', 'asofdate'],
@@ -206,7 +207,9 @@ export async function parseValuationFile(file: File): Promise<ValuationParseResu
   })
   const firstSheet = workbook.SheetNames[0]
   if (!firstSheet) throw new Error('檔案沒有可讀取的工作表')
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[firstSheet], {
+  const worksheet = workbook.Sheets[firstSheet]
+  assertWorksheetWasNotTruncated(worksheet)
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
     defval: '',
     raw: true,
   })

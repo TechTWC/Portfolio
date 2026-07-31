@@ -9,7 +9,7 @@ import {
 function workbookFile(bookType: 'xlsx' | 'xls', rows: unknown[][]): File {
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), 'Transactions')
-  const bytes = XLSX.write(workbook, { bookType, type: 'array' })
+  const bytes = XLSX.write(workbook, { bookType, type: 'array', compression: true })
   return new File([bytes], `synthetic.${bookType}`)
 }
 
@@ -124,4 +124,32 @@ describe('transaction parser', () => {
 
     await expect(parseTransactionRows(rows)).rejects.toThrow('試算表資料列過多')
   })
+
+  it('rejects a real workbook truncated at an interspersed blank row', async () => {
+    const dataRow = ['2026-01-02', 'BUY', '2330', 1, 100, 'TWD']
+    const file = workbookFile('xlsx', [
+      ['日期', '交易類型', '股票代號', '購買股數', '購買股價', '幣別'],
+      [],
+      ...Array.from({ length: MAX_SPREADSHEET_ROWS + 1 }, () => dataRow),
+    ])
+
+    await expect(parseTransactionFile(file)).rejects.toThrow('試算表資料列過多；上限為 50,000 列')
+  }, 30_000)
+
+  it('parses a normal workbook with a blank row and the exact supported boundary', async () => {
+    const dataRow = ['2026-01-02', 'BUY', '2330', 1, 100, 'TWD']
+    const normal = workbookFile('xlsx', [
+      ['日期', '交易類型', '股票代號', '購買股數', '購買股價', '幣別'],
+      dataRow,
+      [],
+      dataRow,
+    ])
+    const boundary = workbookFile('xlsx', [
+      ['日期', '交易類型', '股票代號', '購買股數', '購買股價', '幣別'],
+      ...Array.from({ length: MAX_SPREADSHEET_ROWS }, () => dataRow),
+    ])
+
+    await expect(parseTransactionFile(normal)).resolves.toMatchObject({ sourceRowCount: 2 })
+    await expect(parseTransactionFile(boundary)).resolves.toMatchObject({ sourceRowCount: MAX_SPREADSHEET_ROWS })
+  }, 30_000)
 })

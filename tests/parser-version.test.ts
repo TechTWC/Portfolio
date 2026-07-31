@@ -7,8 +7,8 @@ describe('parser provenance versions', () => {
   it('uses the current transaction parser version in upload payloads', async () => {
     const uploadSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
 
-    expect(PARSER_VERSION).toBe('cloud-v0.1.1')
-    expect(PARSER_VERSION).not.toBe('cloud-v0.1.0')
+    expect(PARSER_VERSION).toBe('cloud-v0.1.2')
+    expect(PARSER_VERSION).not.toBe('cloud-v0.1.1')
     expect(uploadSource).toMatch(/parserVersion:\s*PARSER_VERSION/g)
     expect(uploadSource.match(/parserVersion:\s*PARSER_VERSION/g)).toHaveLength(2)
   })
@@ -16,8 +16,8 @@ describe('parser provenance versions', () => {
   it('uses the current valuation parser version in upload payloads', async () => {
     const uploadSource = await readFile(new URL('../src/ValuationWorkspace.tsx', import.meta.url), 'utf8')
 
-    expect(VALUATION_PARSER_VERSION).toBe('valuation-v0.3.2')
-    expect(VALUATION_PARSER_VERSION).not.toBe('valuation-v0.3.1')
+    expect(VALUATION_PARSER_VERSION).toBe('valuation-v0.3.3')
+    expect(VALUATION_PARSER_VERSION).not.toBe('valuation-v0.3.2')
     expect(uploadSource).toMatch(/parserVersion:\s*VALUATION_PARSER_VERSION/g)
     expect(uploadSource.match(/parserVersion:\s*VALUATION_PARSER_VERSION/g)).toHaveLength(2)
   })

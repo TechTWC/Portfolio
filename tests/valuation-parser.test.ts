@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { parseValuationRows } from '../src/lib/valuation-parser'
+import * as XLSX from 'xlsx'
+import { parseValuationFile, parseValuationRows } from '../src/lib/valuation-parser'
+import { MAX_SPREADSHEET_ROWS } from '../src/lib/spreadsheet-safety'
 
 const originalTimeZone = process.env.TZ
+
+function workbookFile(rows: unknown[][]): File {
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), 'Valuations')
+  return new File([XLSX.write(workbook, { bookType: 'xlsx', type: 'array', compression: true })], 'valuations.xlsx')
+}
 
 afterEach(() => {
   process.env.TZ = originalTimeZone
@@ -91,4 +99,32 @@ describe('valuation snapshot parser', () => {
     expect(result.rejected).toHaveLength(1)
     expect(result.rejected[0].sourceRowNumber).toBe(2)
   })
+
+  it('rejects a real workbook truncated at an interspersed blank row', async () => {
+    const dataRow = ['2026-06-30', '2026-06-30', 'FX', '', 'USD', 33]
+    const file = workbookFile([
+      ['估值日', '標記日期', '類型', '股票代號', '幣別', '數值'],
+      [],
+      ...Array.from({ length: MAX_SPREADSHEET_ROWS + 1 }, () => dataRow),
+    ])
+
+    await expect(parseValuationFile(file)).rejects.toThrow('試算表資料列過多；上限為 50,000 列')
+  }, 30_000)
+
+  it('parses a normal workbook with a blank row and the exact supported boundary', async () => {
+    const dataRow = ['2026-06-30', '2026-06-30', 'FX', '', 'USD', 33]
+    const normal = workbookFile([
+      ['估值日', '標記日期', '類型', '股票代號', '幣別', '數值'],
+      dataRow,
+      [],
+      dataRow,
+    ])
+    const boundary = workbookFile([
+      ['估值日', '標記日期', '類型', '股票代號', '幣別', '數值'],
+      ...Array.from({ length: MAX_SPREADSHEET_ROWS }, () => dataRow),
+    ])
+
+    await expect(parseValuationFile(normal)).resolves.toMatchObject({ sourceRowCount: 2 })
+    await expect(parseValuationFile(boundary)).resolves.toMatchObject({ sourceRowCount: MAX_SPREADSHEET_ROWS })
+  }, 30_000)
 })
