@@ -119,7 +119,7 @@ describe('valuation snapshot parser', () => {
   }, 30_000)
 
   it('rejects a truncated CSV when SheetJS omits the original range', async () => {
-    const header = ['估值日', '標記日期', '類型', '股票代號', '幣別', '數值']
+    const header = ['valuation_date', 'mark_date', 'type', 'ticker', 'currency', 'value']
     const dataRow = ['2026-06-30', '2026-06-30', 'FX', '', 'USD', 33]
     const file = csvFile([
       header,
@@ -132,7 +132,7 @@ describe('valuation snapshot parser', () => {
   }, 30_000)
 
   it('parses a normal CSV containing a blank row', async () => {
-    const header = ['估值日', '標記日期', '類型', '股票代號', '幣別', '數值']
+    const header = ['valuation_date', 'mark_date', 'type', 'ticker', 'currency', 'value']
     const dataRow = ['2026-06-30', '2026-06-30', 'FX', '', 'USD', 33]
     const file = csvFile([header, dataRow, [], dataRow])
 

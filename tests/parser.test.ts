@@ -146,7 +146,7 @@ describe('transaction parser', () => {
   }, 30_000)
 
   it('rejects a truncated CSV when SheetJS omits the original range', async () => {
-    const header = ['日期', '交易類型', '股票代號', '購買股數', '購買股價', '幣別']
+    const header = ['trade_date', 'type', 'stock_id', 'qty', 'trade_price', 'ccy']
     const dataRow = ['2026-01-02', 'BUY', '2330', 1, 100, 'TWD']
     const file = csvFile('transactions.csv', [
       header,
@@ -159,7 +159,7 @@ describe('transaction parser', () => {
   }, 30_000)
 
   it('accepts a normal CSV with a blank row and does not flag the exact CSV boundary', async () => {
-    const header = ['日期', '交易類型', '股票代號', '購買股數', '購買股價', '幣別']
+    const header = ['trade_date', 'type', 'stock_id', 'qty', 'trade_price', 'ccy']
     const dataRow = ['2026-01-02', 'BUY', '2330', 1, 100, 'TWD']
     const normal = csvFile('transactions-normal.csv', [header, dataRow, [], dataRow])
     await expect(parseTransactionFile(normal)).resolves.toMatchObject({ sourceRowCount: 2 })
