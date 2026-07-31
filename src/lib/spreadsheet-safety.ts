@@ -3,6 +3,10 @@ import * as XLSX from 'xlsx'
 export const MAX_SPREADSHEET_FILE_BYTES = 10 * 1024 * 1024
 export const MAX_SPREADSHEET_ROWS = 50_000
 export const MAX_SPREADSHEET_ROWS_TO_READ = MAX_SPREADSHEET_ROWS + 2
+export const MAX_XLSX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
+export const MAX_XLSX_COMPRESSION_RATIO = 100
+
+export const XLSX_EXPANSION_LIMIT_MESSAGE = 'Excel 檔案無法安全開啟；請確認檔案內容與壓縮格式後重試'
 
 const SPREADSHEET_ROW_LIMIT_MESSAGE = `試算表資料列過多；上限為 ${MAX_SPREADSHEET_ROWS.toLocaleString('en-US')} 列`
 
@@ -16,6 +20,109 @@ export function assertSpreadsheetRowCount(rows: unknown[]): void {
   if (rows.length > MAX_SPREADSHEET_ROWS) {
     throw new Error(SPREADSHEET_ROW_LIMIT_MESSAGE)
   }
+}
+
+function xlsxSafetyError(): Error {
+  return new Error(XLSX_EXPANSION_LIMIT_MESSAGE)
+}
+
+function readUint16(view: DataView, offset: number): number {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset + 2 > view.byteLength) throw xlsxSafetyError()
+  return view.getUint16(offset, true)
+}
+
+function readUint32(view: DataView, offset: number): number {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset + 4 > view.byteLength) throw xlsxSafetyError()
+  return view.getUint32(offset, true)
+}
+
+/** Validate a classic, unencrypted XLSX ZIP using metadata only; no member is inflated. */
+export function assertXlsxZipExpansionIsSafe(buffer: ArrayBuffer): void {
+  const view = new DataView(buffer)
+  const minimumEocdOffset = Math.max(0, view.byteLength - 65_557)
+  let eocdOffset = -1
+  for (let offset = view.byteLength - 22; offset >= minimumEocdOffset; offset -= 1) {
+    if (readUint32(view, offset) === 0x06054b50) {
+      const commentLength = readUint16(view, offset + 20)
+      if (offset + 22 + commentLength === view.byteLength) {
+        eocdOffset = offset
+        break
+      }
+    }
+  }
+  if (eocdOffset < 0) throw xlsxSafetyError()
+
+  const disk = readUint16(view, eocdOffset + 4)
+  const centralDisk = readUint16(view, eocdOffset + 6)
+  const entriesOnDisk = readUint16(view, eocdOffset + 8)
+  const entryCount = readUint16(view, eocdOffset + 10)
+  const centralSize = readUint32(view, eocdOffset + 12)
+  const centralOffset = readUint32(view, eocdOffset + 16)
+  if (disk !== 0 || centralDisk !== 0 || entriesOnDisk !== entryCount || entryCount === 0
+    || entryCount === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff
+    || centralOffset + centralSize !== eocdOffset) throw xlsxSafetyError()
+
+  let offset = centralOffset
+  let totalCompressed = 0
+  let totalUncompressed = 0
+  const entries: Array<{
+    compressed: number
+    uncompressed: number
+    crc: number
+    flags: number
+    localOffset: number
+    method: number
+    nameOffset: number
+    nameLength: number
+  }> = []
+  for (let index = 0; index < entryCount; index += 1) {
+    if (readUint32(view, offset) !== 0x02014b50) throw xlsxSafetyError()
+    const flags = readUint16(view, offset + 8)
+    const method = readUint16(view, offset + 10)
+    const crc = readUint32(view, offset + 16)
+    const compressed = readUint32(view, offset + 20)
+    const uncompressed = readUint32(view, offset + 24)
+    const nameLength = readUint16(view, offset + 28)
+    const extraLength = readUint16(view, offset + 30)
+    const commentLength = readUint16(view, offset + 32)
+    const startDisk = readUint16(view, offset + 34)
+    const localOffset = readUint32(view, offset + 42)
+    const nextOffset = offset + 46 + nameLength + extraLength + commentLength
+    if ((flags & 0x0009) !== 0 || startDisk !== 0 || compressed === 0xffffffff
+      || uncompressed === 0xffffffff || localOffset === 0xffffffff || nextOffset > eocdOffset) throw xlsxSafetyError()
+    if (uncompressed > 0 && compressed === 0) throw xlsxSafetyError()
+    if (compressed > 0 && uncompressed / compressed > MAX_XLSX_COMPRESSION_RATIO) throw xlsxSafetyError()
+    totalCompressed += compressed
+    totalUncompressed += uncompressed
+    if (!Number.isSafeInteger(totalCompressed) || !Number.isSafeInteger(totalUncompressed)
+      || totalUncompressed > MAX_XLSX_UNCOMPRESSED_BYTES) throw xlsxSafetyError()
+    entries.push({ compressed, uncompressed, crc, flags, localOffset, method, nameOffset: offset + 46, nameLength })
+    offset = nextOffset
+  }
+  if (offset !== eocdOffset || totalCompressed === 0
+    || totalUncompressed / totalCompressed > MAX_XLSX_COMPRESSION_RATIO) throw xlsxSafetyError()
+
+  const ranges: Array<[number, number]> = []
+  for (const entry of entries) {
+    if (readUint32(view, entry.localOffset) !== 0x04034b50
+      || readUint16(view, entry.localOffset + 6) !== entry.flags
+      || readUint16(view, entry.localOffset + 8) !== entry.method
+      || readUint32(view, entry.localOffset + 14) !== entry.crc
+      || readUint32(view, entry.localOffset + 18) !== entry.compressed
+      || readUint32(view, entry.localOffset + 22) !== entry.uncompressed) throw xlsxSafetyError()
+    const nameLength = readUint16(view, entry.localOffset + 26)
+    const extraLength = readUint16(view, entry.localOffset + 28)
+    if (nameLength !== entry.nameLength) throw xlsxSafetyError()
+    for (let index = 0; index < nameLength; index += 1) {
+      if (view.getUint8(entry.localOffset + 30 + index) !== view.getUint8(entry.nameOffset + index)) throw xlsxSafetyError()
+    }
+    const dataStart = entry.localOffset + 30 + nameLength + extraLength
+    const dataEnd = dataStart + entry.compressed
+    if (!Number.isSafeInteger(dataEnd) || dataEnd > centralOffset) throw xlsxSafetyError()
+    ranges.push([entry.localOffset, dataEnd])
+  }
+  ranges.sort((a, b) => a[0] - b[0])
+  if (ranges.some((range, index) => index > 0 && range[0] < ranges[index - 1][1])) throw xlsxSafetyError()
 }
 
 function spreadsheetRowLimitError(): Error {

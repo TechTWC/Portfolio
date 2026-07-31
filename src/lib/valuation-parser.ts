@@ -8,10 +8,11 @@ import {
   assertSpreadsheetFileSize,
   assertSpreadsheetRowCount,
   assertWorksheetWasNotTruncated,
+  assertXlsxZipExpansionIsSafe,
   MAX_SPREADSHEET_ROWS_TO_READ,
 } from './spreadsheet-safety'
 
-export const VALUATION_PARSER_VERSION = 'valuation-v0.3.4'
+export const VALUATION_PARSER_VERSION = 'valuation-v0.3.5'
 
 const COLUMN_ALIASES: Record<string, string[]> = {
   valuationDate: ['估值日', '評價日', '评价日', 'valuation_date', 'valuationdate', 'as_of_date', 'asofdate'],
@@ -198,6 +199,7 @@ export async function parseValuationFile(file: File): Promise<ValuationParseResu
   assertSpreadsheetFileSize(file)
   const buffer = await file.arrayBuffer()
   const fileHash = await sha256Hex(buffer)
+  if (file.name.toLowerCase().endsWith('.xlsx')) assertXlsxZipExpansionIsSafe(buffer)
   // Keep spreadsheet calendar dates as raw strings or serial numbers. Converting
   // them to JS Date objects can introduce browser-timezone date shifts.
   const workbook = XLSX.read(buffer, {
