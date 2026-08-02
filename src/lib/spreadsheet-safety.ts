@@ -36,6 +36,13 @@ function readUint32(view: DataView, offset: number): number {
   return view.getUint32(offset, true)
 }
 
+/** Detect containers that SheetJS will treat as ZIPs, independent of their filename. */
+export function isZipContainer(buffer: ArrayBuffer): boolean {
+  if (buffer.byteLength < 4) return false
+  const signature = new DataView(buffer).getUint32(0, true)
+  return signature === 0x04034b50 || signature === 0x06054b50 || signature === 0x08074b50
+}
+
 /** Validate a classic, unencrypted XLSX ZIP using metadata only; no member is inflated. */
 export function assertXlsxZipExpansionIsSafe(buffer: ArrayBuffer): void {
   const view = new DataView(buffer)
@@ -88,7 +95,7 @@ export function assertXlsxZipExpansionIsSafe(buffer: ArrayBuffer): void {
     const startDisk = readUint16(view, offset + 34)
     const localOffset = readUint32(view, offset + 42)
     const nextOffset = offset + 46 + nameLength + extraLength + commentLength
-    if ((flags & 0x0009) !== 0 || startDisk !== 0 || compressed === 0xffffffff
+    if ((flags & 0x0001) !== 0 || startDisk !== 0 || compressed === 0xffffffff
       || uncompressed === 0xffffffff || localOffset === 0xffffffff || nextOffset > eocdOffset) throw xlsxSafetyError()
     if (uncompressed > 0 && compressed === 0) throw xlsxSafetyError()
     if (compressed > 0 && uncompressed / compressed > MAX_XLSX_COMPRESSION_RATIO) throw xlsxSafetyError()
@@ -106,10 +113,17 @@ export function assertXlsxZipExpansionIsSafe(buffer: ArrayBuffer): void {
   for (const entry of entries) {
     if (readUint32(view, entry.localOffset) !== 0x04034b50
       || readUint16(view, entry.localOffset + 6) !== entry.flags
-      || readUint16(view, entry.localOffset + 8) !== entry.method
-      || readUint32(view, entry.localOffset + 14) !== entry.crc
-      || readUint32(view, entry.localOffset + 18) !== entry.compressed
-      || readUint32(view, entry.localOffset + 22) !== entry.uncompressed) throw xlsxSafetyError()
+      || readUint16(view, entry.localOffset + 8) !== entry.method) throw xlsxSafetyError()
+    const usesDescriptor = (entry.flags & 0x0008) !== 0
+    const localCrc = readUint32(view, entry.localOffset + 14)
+    const localCompressed = readUint32(view, entry.localOffset + 18)
+    const localUncompressed = readUint32(view, entry.localOffset + 22)
+    if (usesDescriptor) {
+      if ((localCrc !== 0 && localCrc !== entry.crc)
+        || (localCompressed !== 0 && localCompressed !== entry.compressed)
+        || (localUncompressed !== 0 && localUncompressed !== entry.uncompressed)) throw xlsxSafetyError()
+    } else if (localCrc !== entry.crc || localCompressed !== entry.compressed
+      || localUncompressed !== entry.uncompressed) throw xlsxSafetyError()
     const nameLength = readUint16(view, entry.localOffset + 26)
     const extraLength = readUint16(view, entry.localOffset + 28)
     if (nameLength !== entry.nameLength) throw xlsxSafetyError()
@@ -119,7 +133,21 @@ export function assertXlsxZipExpansionIsSafe(buffer: ArrayBuffer): void {
     const dataStart = entry.localOffset + 30 + nameLength + extraLength
     const dataEnd = dataStart + entry.compressed
     if (!Number.isSafeInteger(dataEnd) || dataEnd > centralOffset) throw xlsxSafetyError()
-    ranges.push([entry.localOffset, dataEnd])
+    let memberEnd = dataEnd
+    if (usesDescriptor) {
+      const descriptorMatches = (descriptorOffset: number) => readUint32(view, descriptorOffset) === entry.crc
+        && readUint32(view, descriptorOffset + 4) === entry.compressed
+        && readUint32(view, descriptorOffset + 8) === entry.uncompressed
+      if (readUint32(view, dataEnd) === 0x08074b50 && descriptorMatches(dataEnd + 4)) {
+        memberEnd = dataEnd + 16
+      } else if (descriptorMatches(dataEnd)) {
+        memberEnd = dataEnd + 12
+      } else {
+        throw xlsxSafetyError()
+      }
+      if (memberEnd > centralOffset) throw xlsxSafetyError()
+    }
+    ranges.push([entry.localOffset, memberEnd])
   }
   ranges.sort((a, b) => a[0] - b[0])
   if (ranges.some((range, index) => index > 0 && range[0] < ranges[index - 1][1])) throw xlsxSafetyError()
