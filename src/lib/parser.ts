@@ -11,7 +11,7 @@ import {
   MAX_SPREADSHEET_ROWS_TO_READ,
 } from './spreadsheet-safety'
 
-export const PARSER_VERSION = 'cloud-v0.1.5'
+export const PARSER_VERSION = 'cloud-v0.1.6'
 
 const INVALID_EXCEL_FILE_MESSAGE = 'Excel 檔案損壞或副檔名與格式不符；請確認檔案可正常開啟後重新上傳'
 
@@ -277,7 +277,7 @@ export async function parseTransactionFile(file: File): Promise<ParseResult> {
   const buffer = await file.arrayBuffer()
   const fileHash = await sha256Hex(buffer)
   assertExcelContainerMatchesExtension(file, buffer)
-  if (isZipContainer(buffer)) assertXlsxZipExpansionIsSafe(buffer)
+  if (isZipContainer(buffer)) await assertXlsxZipExpansionIsSafe(buffer)
   let workbook: XLSX.WorkBook
   try {
     workbook = XLSX.read(buffer, {

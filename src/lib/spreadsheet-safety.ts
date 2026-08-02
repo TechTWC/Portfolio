@@ -5,6 +5,7 @@ export const MAX_SPREADSHEET_ROWS = 50_000
 export const MAX_SPREADSHEET_ROWS_TO_READ = MAX_SPREADSHEET_ROWS + 2
 export const MAX_XLSX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 export const MAX_XLSX_COMPRESSION_RATIO = 100
+export const XLSX_EXPANSION_TIMEOUT_MS = 5_000
 
 export const XLSX_EXPANSION_LIMIT_MESSAGE = 'Excel 檔案無法安全開啟；請確認檔案內容與壓縮格式後重試'
 
@@ -43,8 +44,20 @@ export function isZipContainer(buffer: ArrayBuffer): boolean {
   return signature === 0x04034b50 || signature === 0x06054b50 || signature === 0x08074b50
 }
 
-/** Validate a classic, unencrypted XLSX ZIP using metadata only; no member is inflated. */
-export function assertXlsxZipExpansionIsSafe(buffer: ArrayBuffer): void {
+type ZipEntry = {
+  compressed: number
+  uncompressed: number
+  crc: number
+  flags: number
+  localOffset: number
+  method: number
+  nameOffset: number
+  nameLength: number
+  dataStart?: number
+}
+
+/** Validate classic ZIP structure and return bounded member ranges for actual expansion checks. */
+function inspectXlsxZip(buffer: ArrayBuffer): ZipEntry[] {
   const view = new DataView(buffer)
   const minimumEocdOffset = Math.max(0, view.byteLength - 65_557)
   let eocdOffset = -1
@@ -72,16 +85,7 @@ export function assertXlsxZipExpansionIsSafe(buffer: ArrayBuffer): void {
   let offset = centralOffset
   let totalCompressed = 0
   let totalUncompressed = 0
-  const entries: Array<{
-    compressed: number
-    uncompressed: number
-    crc: number
-    flags: number
-    localOffset: number
-    method: number
-    nameOffset: number
-    nameLength: number
-  }> = []
+  const entries: ZipEntry[] = []
   for (let index = 0; index < entryCount; index += 1) {
     if (readUint32(view, offset) !== 0x02014b50) throw xlsxSafetyError()
     const flags = readUint16(view, offset + 8)
@@ -148,9 +152,73 @@ export function assertXlsxZipExpansionIsSafe(buffer: ArrayBuffer): void {
       if (memberEnd > centralOffset) throw xlsxSafetyError()
     }
     ranges.push([entry.localOffset, memberEnd])
+    entry.dataStart = dataStart
   }
   ranges.sort((a, b) => a[0] - b[0])
   if (ranges.some((range, index) => index > 0 && range[0] < ranges[index - 1][1])) throw xlsxSafetyError()
+  return entries
+}
+
+async function measureDeflateEntry(
+  buffer: ArrayBuffer,
+  entry: ZipEntry,
+  deadline: number,
+  totalSoFar: number,
+): Promise<number> {
+  if (entry.dataStart === undefined || typeof DecompressionStream === 'undefined') throw xlsxSafetyError()
+  const controller = new AbortController()
+  const compressed = new Blob([buffer.slice(entry.dataStart, entry.dataStart + entry.compressed)])
+  const output = compressed.stream().pipeThrough(new DecompressionStream('deflate-raw'), { signal: controller.signal })
+  const reader = output.getReader()
+  let actual = 0
+  const remaining = deadline - performance.now()
+  if (remaining <= 0) throw xlsxSafetyError()
+  const timeout = setTimeout(() => {
+    controller.abort()
+    void reader.cancel().catch(() => undefined)
+  }, remaining)
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      actual += value.byteLength
+      if (actual > MAX_XLSX_UNCOMPRESSED_BYTES
+        || totalSoFar + actual > MAX_XLSX_UNCOMPRESSED_BYTES
+        || (entry.compressed > 0 && actual / entry.compressed > MAX_XLSX_COMPRESSION_RATIO)
+        || performance.now() > deadline) {
+        controller.abort()
+        throw xlsxSafetyError()
+      }
+    }
+  } finally {
+    clearTimeout(timeout)
+    if (controller.signal.aborted) await reader.cancel().catch(() => undefined)
+  }
+  return actual
+}
+
+/** Inflate ZIP members without retaining output, enforcing actual byte, ratio, and time limits. */
+export async function assertXlsxZipExpansionIsSafe(buffer: ArrayBuffer): Promise<void> {
+  try {
+    const entries = inspectXlsxZip(buffer)
+    const deadline = performance.now() + XLSX_EXPANSION_TIMEOUT_MS
+    let totalActual = 0
+    let totalCompressed = 0
+    for (const entry of entries) {
+      if (entry.method !== 0 && entry.method !== 8) throw xlsxSafetyError()
+      const actual = entry.method === 0
+        ? entry.compressed
+        : await measureDeflateEntry(buffer, entry, deadline, totalActual)
+      if (actual !== entry.uncompressed) throw xlsxSafetyError()
+      totalActual += actual
+      totalCompressed += entry.compressed
+      if (totalActual > MAX_XLSX_UNCOMPRESSED_BYTES
+        || (totalCompressed > 0 && totalActual / totalCompressed > MAX_XLSX_COMPRESSION_RATIO)
+        || performance.now() > deadline) throw xlsxSafetyError()
+    }
+  } catch {
+    throw xlsxSafetyError()
+  }
 }
 
 function spreadsheetRowLimitError(): Error {

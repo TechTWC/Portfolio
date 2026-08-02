@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
+import { deflateRawSync } from 'node:zlib'
 import * as XLSX from 'xlsx'
 import { parseTransactionFile } from '../src/lib/parser'
 import {
   assertXlsxZipExpansionIsSafe,
+  MAX_XLSX_COMPRESSION_RATIO,
+  XLSX_EXPANSION_TIMEOUT_MS,
   MAX_XLSX_UNCOMPRESSED_BYTES,
   XLSX_EXPANSION_LIMIT_MESSAGE,
 } from '../src/lib/spreadsheet-safety'
@@ -102,31 +105,65 @@ function withCentralSizes(sizes: Array<{ compressed: number; uncompressed: numbe
   return bytes
 }
 
+function lyingDeflateArchive(actualBytes = 1024 * 1024, declaredBytes?: number): Uint8Array {
+  const compressed = new Uint8Array(deflateRawSync(new Uint8Array(actualBytes)))
+  const declared = declaredBytes ?? compressed.byteLength * MAX_XLSX_COMPRESSION_RATIO
+  const name = new TextEncoder().encode('xl/worksheets/sheet1.xml')
+  const localSize = 30 + name.length + compressed.length
+  const centralSize = 46 + name.length
+  const bytes = new Uint8Array(localSize + centralSize + 22)
+  const view = new DataView(bytes.buffer)
+  view.setUint32(0, 0x04034b50, true)
+  view.setUint16(4, 20, true)
+  view.setUint16(8, 8, true)
+  view.setUint32(18, compressed.length, true)
+  view.setUint32(22, declared, true)
+  view.setUint16(26, name.length, true)
+  bytes.set(name, 30)
+  bytes.set(compressed, 30 + name.length)
+  const central = localSize
+  view.setUint32(central, 0x02014b50, true)
+  view.setUint16(central + 4, 20, true)
+  view.setUint16(central + 6, 20, true)
+  view.setUint16(central + 10, 8, true)
+  view.setUint32(central + 20, compressed.length, true)
+  view.setUint32(central + 24, declared, true)
+  view.setUint16(central + 28, name.length, true)
+  bytes.set(name, central + 46)
+  const eocd = central + centralSize
+  view.setUint32(eocd, 0x06054b50, true)
+  view.setUint16(eocd + 8, 1, true)
+  view.setUint16(eocd + 10, 1, true)
+  view.setUint32(eocd + 12, centralSize, true)
+  view.setUint32(eocd + 16, central, true)
+  return bytes
+}
+
 describe('XLSX ZIP expansion preflight', () => {
-  it('accepts an ordinary XLSX below the expansion limits', () => {
-    expect(() => assertXlsxZipExpansionIsSafe(workbookBytes().buffer as ArrayBuffer)).not.toThrow()
+  it('accepts an ordinary XLSX below the expansion limits', async () => {
+    await expect(assertXlsxZipExpansionIsSafe(workbookBytes().buffer as ArrayBuffer)).resolves.toBeUndefined()
   })
 
-  it('rejects a small archive declaring more than 100 MiB cumulatively', () => {
+  it('rejects a small archive declaring more than 100 MiB cumulatively', async () => {
     const bytes = withCentralSizes([
       { compressed: 600_000, uncompressed: 60 * 1024 * 1024 },
       { compressed: 600_000, uncompressed: 41 * 1024 * 1024 },
     ])
     expect(bytes.byteLength).toBeLessThan(10 * 1024 * 1024)
-    expect(() => assertXlsxZipExpansionIsSafe(bytes.buffer as ArrayBuffer)).toThrow(XLSX_EXPANSION_LIMIT_MESSAGE)
+    await expect(assertXlsxZipExpansionIsSafe(bytes.buffer as ArrayBuffer)).rejects.toThrow(XLSX_EXPANSION_LIMIT_MESSAGE)
   })
 
-  it('rejects an entry whose declared expansion ratio exceeds 100:1', () => {
+  it('rejects an entry whose declared expansion ratio exceeds 100:1', async () => {
     const bytes = withCentralSizes([{ compressed: 1, uncompressed: 101 }])
-    expect(() => assertXlsxZipExpansionIsSafe(bytes.buffer as ArrayBuffer)).toThrow(XLSX_EXPANSION_LIMIT_MESSAGE)
+    await expect(assertXlsxZipExpansionIsSafe(bytes.buffer as ArrayBuffer)).rejects.toThrow(XLSX_EXPANSION_LIMIT_MESSAGE)
   })
 
-  it('rejects malformed or unprovable ZIP metadata', () => {
+  it('rejects malformed or unprovable ZIP metadata', async () => {
     const bytes = workbookBytes()
     const view = new DataView(bytes.buffer)
     const entry = centralEntries(bytes)[0]
     view.setUint32(entry + 42, 0xffffffff, true)
-    expect(() => assertXlsxZipExpansionIsSafe(bytes.buffer as ArrayBuffer)).toThrow(XLSX_EXPANSION_LIMIT_MESSAGE)
+    await expect(assertXlsxZipExpansionIsSafe(bytes.buffer as ArrayBuffer)).rejects.toThrow(XLSX_EXPANSION_LIMIT_MESSAGE)
   })
 
   it('rejects adversarial XLSX metadata at both entry points before SheetJS parsing', async () => {
@@ -155,14 +192,14 @@ describe('XLSX ZIP expansion preflight', () => {
 
   it.each([true, false])('accepts a valid bit-3 XLSX descriptor (signature: %s)', async (includeSignature) => {
     const bytes = withDataDescriptors(includeSignature)
-    expect(() => assertXlsxZipExpansionIsSafe(bytes.buffer as ArrayBuffer)).not.toThrow()
+    await expect(assertXlsxZipExpansionIsSafe(bytes.buffer as ArrayBuffer)).resolves.toBeUndefined()
     await expect(parseTransactionFile(new File([bytes.buffer as ArrayBuffer], 'transactions.xlsx')))
       .resolves.toMatchObject({ sourceRowCount: 1, transactions: [{ ticker: '2330.TW' }] })
     await expect(parseValuationFile(new File([bytes.buffer as ArrayBuffer], 'valuations.xlsx')))
       .resolves.toMatchObject({ sourceRowCount: 1, marks: [{ ticker: '2330.TW' }] })
   })
 
-  it('rejects a tampered data descriptor', () => {
+  it('rejects a tampered data descriptor', async () => {
     const bytes = withDataDescriptors(true)
     const view = new DataView(bytes.buffer)
     const firstCentral = centralEntries(bytes)[0]
@@ -170,15 +207,49 @@ describe('XLSX ZIP expansion preflight', () => {
     const dataEnd = localOffset + 30 + view.getUint16(localOffset + 26, true)
       + view.getUint16(localOffset + 28, true) + view.getUint32(firstCentral + 20, true)
     view.setUint32(dataEnd + 4, view.getUint32(dataEnd + 4, true) ^ 1, true)
-    expect(() => assertXlsxZipExpansionIsSafe(bytes.buffer as ArrayBuffer)).toThrow(XLSX_EXPANSION_LIMIT_MESSAGE)
+    await expect(assertXlsxZipExpansionIsSafe(bytes.buffer as ArrayBuffer)).rejects.toThrow(XLSX_EXPANSION_LIMIT_MESSAGE)
   })
 
-  it('rejects inconsistent bit-3 local and central metadata', () => {
+  it('rejects inconsistent bit-3 local and central metadata', async () => {
     const bytes = withDataDescriptors(false)
     const view = new DataView(bytes.buffer)
     const firstCentral = centralEntries(bytes)[0]
     const localOffset = view.getUint32(firstCentral + 42, true)
     view.setUint32(localOffset + 18, view.getUint32(firstCentral + 20, true) + 1, true)
-    expect(() => assertXlsxZipExpansionIsSafe(bytes.buffer as ArrayBuffer)).toThrow(XLSX_EXPANSION_LIMIT_MESSAGE)
+    await expect(assertXlsxZipExpansionIsSafe(bytes.buffer as ArrayBuffer)).rejects.toThrow(XLSX_EXPANSION_LIMIT_MESSAGE)
+  })
+
+  it('rejects lying metadata based on actual expansion before either parser calls SheetJS', async () => {
+    const bytes = lyingDeflateArchive()
+    const read = vi.mocked(XLSX.read)
+    read.mockClear()
+    await expect(parseTransactionFile(new File([bytes.buffer as ArrayBuffer], 'transactions.xlsx')))
+      .rejects.toThrow(XLSX_EXPANSION_LIMIT_MESSAGE)
+    await expect(parseValuationFile(new File([bytes.buffer as ArrayBuffer], 'valuations.xlsx')))
+      .rejects.toThrow(XLSX_EXPANSION_LIMIT_MESSAGE)
+    expect(read).not.toHaveBeenCalled()
+  })
+
+  it('rejects an actual expanded size that differs from otherwise bounded metadata', async () => {
+    const bytes = lyingDeflateArchive(1_000, 999)
+    await expect(assertXlsxZipExpansionIsSafe(bytes.buffer as ArrayBuffer))
+      .rejects.toThrow(XLSX_EXPANSION_LIMIT_MESSAGE)
+  })
+
+  it('cancels a stalled native inflater and fails closed at the resource timeout', async () => {
+    vi.useFakeTimers()
+    let cancelled = false
+    class StalledDecompressionStream {
+      readable = new ReadableStream<Uint8Array>({ cancel: () => { cancelled = true } })
+      writable = new WritableStream<Uint8Array>()
+    }
+    vi.stubGlobal('DecompressionStream', StalledDecompressionStream)
+    const pending = assertXlsxZipExpansionIsSafe(workbookBytes().buffer as ArrayBuffer)
+    const rejection = expect(pending).rejects.toThrow(XLSX_EXPANSION_LIMIT_MESSAGE)
+    await vi.advanceTimersByTimeAsync(XLSX_EXPANSION_TIMEOUT_MS + 1)
+    await rejection
+    expect(cancelled).toBe(true)
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
   })
 })
