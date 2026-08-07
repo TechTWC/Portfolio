@@ -67,6 +67,21 @@ describe('transaction lineage planning', () => {
     expect(result.rows[0]).toMatchObject({ transactionId: 'txn-1', kind: 'CORRECTED' })
   })
 
+  it('retains the source-row fallback for a unique date correction', () => {
+    const previous = row('txn-1', 'a', { sourceRowNumber: 2 })
+    const corrected = incoming(previous, {
+      tradeDate: '2026-01-03',
+      price: 105,
+      amountForeign: 1_050,
+      rowHash: 'b'.repeat(64),
+    })
+
+    const result = planTransactionLineage([previous], [corrected])
+
+    expect(result.rows[0]).toMatchObject({ transactionId: 'txn-1', kind: 'CORRECTED' })
+    expect(result.summary).toEqual({ unchanged: 0, corrected: 1, added: 0, removed: 0, ambiguous: 0 })
+  })
+
   it('prefers a unique semantic predecessor over a conflicting reused source row', () => {
     const removed = row('txn-1', 'a', {
       sourceRowNumber: 2,
@@ -100,6 +115,22 @@ describe('transaction lineage planning', () => {
 
     expect(result.rows.map((entry) => entry.transactionId)).toEqual([null, null])
     expect(result.summary).toEqual({ unchanged: 0, corrected: 0, added: 2, removed: 2, ambiguous: 2 })
+  })
+
+  it('does not fall back to a reused source row for an ambiguous semantic group', () => {
+    const first = row('txn-1', 'a', { sourceRowNumber: 2 })
+    const second = row('txn-2', 'b', { sourceRowNumber: 3 })
+    const correctedSurvivor = incoming(first, {
+      sourceRowNumber: 2,
+      quantity: 15,
+      amountForeign: 1_500,
+      rowHash: 'c'.repeat(64),
+    })
+
+    const result = planTransactionLineage([first, second], [correctedSurvivor])
+
+    expect(result.rows[0]).toMatchObject({ transactionId: null, kind: 'NEW' })
+    expect(result.summary).toEqual({ unchanged: 0, corrected: 0, added: 1, removed: 2, ambiguous: 1 })
   })
 
   it('reports genuine additions and removals without linking them', () => {

@@ -70,13 +70,16 @@ export function planTransactionLineage(
   const matchUniqueGroups = (
     keyFor: (row: NormalizedTransaction) => string,
     ambiguousKeys?: Set<string>,
+    skipIncoming?: (row: NormalizedTransaction) => boolean,
   ) => {
     const remainingPrevious = previous
       .map((row, index) => ({ row, index }))
       .filter(({ index }) => !usedPrevious.has(index))
     const remainingIncoming = incoming
       .map((row, index) => ({ row, index }))
-      .filter(({ index }) => planned[index].transactionId === null)
+      .filter(({ row, index }) => (
+        planned[index].transactionId === null && !skipIncoming?.(row)
+      ))
     const previousGroups = groupIndexes(remainingPrevious, ({ row }) => keyFor(row))
     const incomingGroups = groupIndexes(remainingIncoming, ({ row }) => keyFor(row))
 
@@ -108,8 +111,13 @@ export function planTransactionLineage(
 
   // Source row plus the same security/cash identity remains a safe fallback
   // for a one-to-one correction whose date itself changed. Repeated candidates
-  // are deliberately left unmatched rather than guessing their lineage.
-  matchUniqueGroups(correctionKey)
+  // whose semantic group was already ambiguous are deliberately left unmatched
+  // rather than letting a reused row number guess their lineage.
+  matchUniqueGroups(
+    correctionKey,
+    undefined,
+    (row) => ambiguousKeys.has(semanticKey(row)),
+  )
 
   const summary: TransactionLineageSummary = {
     unchanged: planned.filter((row) => row.kind === 'UNCHANGED').length,
