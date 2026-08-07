@@ -67,6 +67,28 @@ describe('transaction lineage planning', () => {
     expect(result.rows[0]).toMatchObject({ transactionId: 'txn-1', kind: 'CORRECTED' })
   })
 
+  it('prefers a unique semantic predecessor over a conflicting reused source row', () => {
+    const removed = row('txn-1', 'a', {
+      sourceRowNumber: 2,
+      tradeDate: '2026-01-01',
+    })
+    const retained = row('txn-2', 'b', {
+      sourceRowNumber: 3,
+      tradeDate: '2026-01-02',
+    })
+    const corrected = incoming(retained, {
+      sourceRowNumber: 2,
+      price: 105,
+      amountForeign: 1_050,
+      rowHash: 'c'.repeat(64),
+    })
+
+    const result = planTransactionLineage([removed, retained], [corrected])
+
+    expect(result.rows[0]).toMatchObject({ transactionId: 'txn-2', kind: 'CORRECTED' })
+    expect(result.summary).toEqual({ unchanged: 0, corrected: 1, added: 0, removed: 1, ambiguous: 0 })
+  })
+
   it('does not guess IDs for ambiguous repeated trades', () => {
     const first = row('txn-1', 'a', { sourceRowNumber: 2 })
     const second = row('txn-2', 'b', { sourceRowNumber: 3 })

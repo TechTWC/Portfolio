@@ -3,7 +3,12 @@ import { getValuationBootstrap } from '../worker/valuation-repository'
 
 type QueryResult = Record<string, unknown> | null
 
-function valuationDatabase(currentDatasetId: string, currentRevision: number): D1Database {
+function valuationDatabase(
+  currentDatasetId: string,
+  currentRevision: number,
+  options: { switchActiveSnapshotAfterMetadataRead?: boolean } = {},
+): D1Database {
+  let snapshotMetadataRead = false
   const prepare = (sql: string) => {
     let bindings: unknown[] = []
     const statement = {
@@ -19,6 +24,7 @@ function valuationDatabase(currentDatasetId: string, currentRevision: number): D
           return { active_snapshot_id: 'snapshot-v4', valuation_revision: 4 }
         }
         if (sql.includes('FROM valuation_snapshots')) {
+          snapshotMetadataRead = true
           return {
             id: 'snapshot-v4',
             revision: 4,
@@ -40,6 +46,11 @@ function valuationDatabase(currentDatasetId: string, currentRevision: number): D
       },
       all: async () => {
         if (sql.includes('FROM valuation_marks')) {
+          const value = options.switchActiveSnapshotAfterMetadataRead
+            && snapshotMetadataRead
+            && sql.includes('JOIN valuation_state')
+            ? 999
+            : 100
           return {
             results: [{
               source_row_number: 2,
@@ -47,7 +58,7 @@ function valuationDatabase(currentDatasetId: string, currentRevision: number): D
               mark_type: 'PRICE',
               ticker: 'TEST',
               currency: 'TWD',
-              value: 100,
+              value,
               source: 'SYNTHETIC',
               row_hash: 'mark-row',
             }],
@@ -108,6 +119,17 @@ describe('valuation repository transaction lineage', () => {
     )
 
     expect(result.freshness).toBe('CURRENT')
+    expect(result.valuation?.totalAssetsTwd).toBe(100)
+  })
+
+  it('uses marks from the captured snapshot when another tab changes active valuation state', async () => {
+    const result = await getValuationBootstrap(
+      valuationDatabase('dataset-v6', 6, { switchActiveSnapshotAfterMetadataRead: true }),
+      { id: 'user-1', email: 'synthetic@example.test' },
+    )
+
+    expect(result.activeSnapshot?.id).toBe('snapshot-v4')
+    expect(result.marks[0]?.value).toBe(100)
     expect(result.valuation?.totalAssetsTwd).toBe(100)
   })
 })

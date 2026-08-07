@@ -100,15 +100,16 @@ export function planTransactionLineage(
     }
   }
 
-  // Same source row plus the same security/cash identity is the safest signal
-  // for an edited amount, price, quantity, date, fee, FX rate, or note.
-  matchUniqueGroups(correctionKey)
-
-  // If a corrected row also moved, reuse its identity only when the semantic
-  // key is one-to-one. Repeated trades are deliberately left unmatched rather
-  // than guessing which correction belongs to which logical transaction.
+  // Prefer the unique semantic predecessor before considering source rows.
+  // A deleted row can make a different transaction occupy its old row number,
+  // so source position must never override a unique calendar/identity match.
   const ambiguousKeys = new Set<string>()
   matchUniqueGroups(semanticKey, ambiguousKeys)
+
+  // Source row plus the same security/cash identity remains a safe fallback
+  // for a one-to-one correction whose date itself changed. Repeated candidates
+  // are deliberately left unmatched rather than guessing their lineage.
+  matchUniqueGroups(correctionKey)
 
   const summary: TransactionLineageSummary = {
     unchanged: planned.filter((row) => row.kind === 'UNCHANGED').length,

@@ -95,6 +95,21 @@ export async function getActiveValuationMarks(
   return rows.results.map(markFromRow)
 }
 
+async function getValuationMarksForSnapshot(
+  db: D1Database,
+  userId: string,
+  snapshotId: string,
+): Promise<NormalizedValuationMark[]> {
+  const rows = await db.prepare(
+    `SELECT source_row_number, mark_date, mark_type, ticker,
+            currency, value, source, row_hash
+       FROM valuation_marks
+      WHERE snapshot_id = ? AND user_id = ?
+      ORDER BY mark_date, mark_type, ticker, currency, source_row_number`,
+  ).bind(snapshotId, userId).all<MarkRow>()
+  return rows.results.map(markFromRow)
+}
+
 export async function getValuationBootstrap(
   db: D1Database,
   user: User,
@@ -138,7 +153,7 @@ export async function getValuationBootstrap(
     }
   }
 
-  const marks = await getActiveValuationMarks(db, user.id)
+  const marks = await getValuationMarksForSnapshot(db, user.id, snapshot.id)
   const transactions = await getTransactionsForDataset(db, user.id, snapshot.transaction_dataset_id)
   const accounting = buildPortfolioAccounting(transactions)
   const cashLedger = buildCashFundingLedger(transactions)

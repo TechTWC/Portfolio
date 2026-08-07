@@ -7,7 +7,7 @@ describe('parser provenance versions', () => {
   it('uses the current transaction parser version in upload payloads', async () => {
     const uploadSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
 
-    expect(PARSER_VERSION).toBe('cloud-v0.1.7')
+    expect(PARSER_VERSION).toBe('cloud-v0.1.8')
     expect(PARSER_VERSION).not.toBe('cloud-v0.1.4')
     expect(uploadSource).toMatch(/parserVersion:\s*PARSER_VERSION/g)
     expect(uploadSource.match(/parserVersion:\s*PARSER_VERSION/g)).toHaveLength(2)

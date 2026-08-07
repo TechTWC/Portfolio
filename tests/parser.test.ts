@@ -111,6 +111,32 @@ describe('transaction parser', () => {
     expect(result.transactions[0].tradeDate).toBe('2026-01-02')
   })
 
+  it.each(['2026/1/2', '2026-1-2'])(
+    'accepts and normalizes the unambiguous calendar date %s',
+    async (calendarDate) => {
+      const result = await parseTransactionRows([
+        { 日期: calendarDate, 交易類型: 'BUY', 股票代號: '2330', 購買股數: 1, 購買股價: 100, 幣別: 'TWD' },
+      ])
+
+      expect(result.transactions[0].tradeDate).toBe('2026-01-02')
+    },
+  )
+
+  it.each(['01/02/2026', '2026/1-2', '2026-02-30'])(
+    'rejects ambiguous or impossible calendar date %s',
+    async (calendarDate) => {
+      const result = await parseTransactionRows([
+        { 日期: '2026-01-01', 交易類型: 'BUY', 股票代號: '2330', 購買股數: 1, 購買股價: 100, 幣別: 'TWD' },
+        { 日期: calendarDate, 交易類型: 'BUY', 股票代號: '2454', 購買股數: 1, 購買股價: 100, 幣別: 'TWD' },
+      ])
+
+      expect(result.transactions).toHaveLength(1)
+      expect(result.rejected).toEqual([
+        { sourceRowNumber: 3, reason: `無法辨識日期：${calendarDate}` },
+      ])
+    },
+  )
+
   it.each(['xlsx', 'xls'] as const)('reports a corrupted %s file as a file-format error', async (bookType) => {
     const file = new File(
       ['This is not an Excel workbook.'],
