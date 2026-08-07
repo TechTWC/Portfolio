@@ -8,7 +8,8 @@ import {
   toValuationMark,
 } from '../src/lib/valuation-contracts'
 import { buildPointInTimeValuation } from '../src/lib/valuation'
-import { getActiveTransactions } from './repository'
+import { determineValuationFreshness, transactionBindingMatches } from '../src/lib/valuation-lineage'
+import { getPortfolioState, getTransactionsForDataset } from './repository'
 
 type User = { id: string; email: string }
 
@@ -23,6 +24,8 @@ type SnapshotRow = {
   mark_count: number
   earliest_mark_date: string | null
   latest_mark_date: string | null
+  transaction_dataset_id: string
+  transaction_revision: number
   created_at: string
   activated_at: string | null
 }
@@ -50,6 +53,8 @@ function snapshotSummary(row: SnapshotRow): ValuationSnapshotSummary {
     markCount: row.mark_count,
     earliestMarkDate: row.earliest_mark_date,
     latestMarkDate: row.latest_mark_date,
+    transactionDatasetId: row.transaction_dataset_id,
+    transactionRevision: row.transaction_revision,
     createdAt: row.created_at,
     activatedAt: row.activated_at,
   }
@@ -90,10 +95,26 @@ export async function getActiveValuationMarks(
   return rows.results.map(markFromRow)
 }
 
+async function getValuationMarksForSnapshot(
+  db: D1Database,
+  userId: string,
+  snapshotId: string,
+): Promise<NormalizedValuationMark[]> {
+  const rows = await db.prepare(
+    `SELECT source_row_number, mark_date, mark_type, ticker,
+            currency, value, source, row_hash
+       FROM valuation_marks
+      WHERE snapshot_id = ? AND user_id = ?
+      ORDER BY mark_date, mark_type, ticker, currency, source_row_number`,
+  ).bind(snapshotId, userId).all<MarkRow>()
+  return rows.results.map(markFromRow)
+}
+
 export async function getValuationBootstrap(
   db: D1Database,
   user: User,
 ): Promise<ValuationBootstrapResponse> {
+  const currentTransactions = await getPortfolioState(db, user.id)
   const state = await db.prepare(
     'SELECT active_snapshot_id, valuation_revision FROM valuation_state WHERE user_id = ?',
   ).bind(user.id).first<{ active_snapshot_id: string | null; valuation_revision: number }>()
@@ -101,8 +122,12 @@ export async function getValuationBootstrap(
   if (!state?.active_snapshot_id) {
     return {
       valuationRevision: state?.valuation_revision ?? 0,
+      currentTransactionDatasetId: currentTransactions.activeDatasetId,
+      currentTransactionRevision: currentTransactions.cloudRevision,
+      freshness: 'NO_SNAPSHOT',
       activeSnapshot: null,
       marks: [],
+      transactions: [],
       valuation: null,
     }
   }
@@ -110,7 +135,7 @@ export async function getValuationBootstrap(
   const snapshot = await db.prepare(
     `SELECT id, revision, status, valuation_date, filename, file_hash,
             parser_version, mark_count, earliest_mark_date, latest_mark_date,
-            created_at, activated_at
+            transaction_dataset_id, transaction_revision, created_at, activated_at
        FROM valuation_snapshots
       WHERE id = ? AND user_id = ?`,
   ).bind(state.active_snapshot_id, user.id).first<SnapshotRow>()
@@ -118,14 +143,18 @@ export async function getValuationBootstrap(
   if (!snapshot) {
     return {
       valuationRevision: state.valuation_revision,
+      currentTransactionDatasetId: currentTransactions.activeDatasetId,
+      currentTransactionRevision: currentTransactions.cloudRevision,
+      freshness: 'NO_SNAPSHOT',
       activeSnapshot: null,
       marks: [],
+      transactions: [],
       valuation: null,
     }
   }
 
-  const marks = await getActiveValuationMarks(db, user.id)
-  const transactions = await getActiveTransactions(db, user.id)
+  const marks = await getValuationMarksForSnapshot(db, user.id, snapshot.id)
+  const transactions = await getTransactionsForDataset(db, user.id, snapshot.transaction_dataset_id)
   const accounting = buildPortfolioAccounting(transactions)
   const cashLedger = buildCashFundingLedger(transactions)
   const valuation = buildPointInTimeValuation({
@@ -137,8 +166,15 @@ export async function getValuationBootstrap(
 
   return {
     valuationRevision: state.valuation_revision,
+    currentTransactionDatasetId: currentTransactions.activeDatasetId,
+    currentTransactionRevision: currentTransactions.cloudRevision,
+    freshness: determineValuationFreshness({
+      transactionDatasetId: snapshot.transaction_dataset_id,
+      transactionRevision: snapshot.transaction_revision,
+    }, currentTransactions),
     activeSnapshot: snapshotSummary(snapshot),
     marks,
+    transactions,
     valuation,
   }
 }
@@ -161,12 +197,20 @@ export async function activateValuationSnapshot(
     'SELECT active_snapshot_id FROM valuation_state WHERE user_id = ? AND valuation_revision = ?',
   ).bind(user.id, payload.baseRevision).first<{ active_snapshot_id: string | null }>()
   if (!stateBefore) throw new Error('VALUATION_VERSION_CONFLICT')
+  const currentTransactionsBefore = await getPortfolioState(db, user.id)
+  if (!transactionBindingMatches({
+    transactionDatasetId: payload.transactionDatasetId,
+    transactionRevision: payload.transactionRevision,
+  }, currentTransactionsBefore)) {
+    throw new Error('TRANSACTION_VERSION_CONFLICT')
+  }
 
   await db.prepare(
     `INSERT INTO valuation_snapshots
        (id, user_id, revision, status, valuation_date, filename, file_hash,
-        parser_version, mark_count, earliest_mark_date, latest_mark_date, validation_json)
-     VALUES (?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        parser_version, mark_count, earliest_mark_date, latest_mark_date, validation_json,
+        transaction_dataset_id, transaction_revision)
+     VALUES (?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     snapshotId,
     user.id,
@@ -179,6 +223,8 @@ export async function activateValuationSnapshot(
     earliest,
     latest,
     JSON.stringify(validation),
+    payload.transactionDatasetId,
+    payload.transactionRevision,
   ).run()
 
   try {
@@ -208,6 +254,13 @@ export async function activateValuationSnapshot(
 
     const current = await currentValuationRevision(db, user.id)
     if (current !== payload.baseRevision) throw new Error('VALUATION_VERSION_CONFLICT')
+    const currentTransactions = await getPortfolioState(db, user.id)
+    if (!transactionBindingMatches({
+      transactionDatasetId: payload.transactionDatasetId,
+      transactionRevision: payload.transactionRevision,
+    }, currentTransactions)) {
+      throw new Error('TRANSACTION_VERSION_CONFLICT')
+    }
 
     const activationResults = await db.batch([
       db.prepare(
@@ -223,8 +276,23 @@ export async function activateValuationSnapshot(
       db.prepare(
         `UPDATE valuation_state
             SET active_snapshot_id = ?, valuation_revision = ?, updated_at = datetime('now')
-          WHERE user_id = ? AND valuation_revision = ?`,
-      ).bind(snapshotId, revision, user.id, payload.baseRevision),
+          WHERE user_id = ? AND valuation_revision = ?
+            AND EXISTS (
+              SELECT 1
+                FROM portfolio_state portfolio
+               WHERE portfolio.user_id = ?
+                 AND portfolio.active_dataset_id = ?
+                 AND portfolio.cloud_revision = ?
+            )`,
+      ).bind(
+        snapshotId,
+        revision,
+        user.id,
+        payload.baseRevision,
+        user.id,
+        payload.transactionDatasetId,
+        payload.transactionRevision,
+      ),
     ])
 
     const stateUpdate = activationResults.at(-1)
@@ -244,6 +312,13 @@ export async function activateValuationSnapshot(
         ).bind(stateBefore.active_snapshot_id, user.id))
       }
       await db.batch(repair)
+      const latestTransactions = await getPortfolioState(db, user.id)
+      if (!transactionBindingMatches({
+        transactionDatasetId: payload.transactionDatasetId,
+        transactionRevision: payload.transactionRevision,
+      }, latestTransactions)) {
+        throw new Error('TRANSACTION_VERSION_CONFLICT')
+      }
       throw new Error('VALUATION_VERSION_CONFLICT')
     }
   } catch (error) {

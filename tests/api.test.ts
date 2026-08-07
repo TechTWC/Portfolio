@@ -31,7 +31,10 @@ const activated: BootstrapResponse = {
   user: { id: 'synthetic-user', email: 'synthetic@example.test' },
   cloudRevision: 7,
   activeDataset: null,
-  transactions: payload.transactions,
+  transactions: payload.transactions.map((transaction) => ({
+    ...transaction,
+    transactionId: 'synthetic-transaction-id',
+  })),
 }
 
 afterEach(() => {

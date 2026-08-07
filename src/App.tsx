@@ -3,10 +3,16 @@ import { buildPortfolioAccounting, type PortfolioAccounting } from './lib/accoun
 import { ApiError, api } from './lib/api'
 import { readCachedBootstrap, writeCachedBootstrap } from './lib/cache'
 import { buildCashFundingLedger, type CashLedgerResult } from './lib/cash-ledger'
-import type { BootstrapResponse, DatasetDiff, DatasetUpload } from './lib/contracts'
+import type {
+  BootstrapResponse,
+  DatasetDiff,
+  DatasetUpload,
+  TransactionLineageSummary,
+} from './lib/contracts'
 import { validateDatasetForActivation, type DatasetActivationGate } from './lib/dataset-gate'
 import { compareTransactionSets } from './lib/diff'
 import { PARSER_VERSION, parseTransactionFile, type ParseResult } from './lib/parser'
+import { planTransactionLineage } from './lib/transaction-lineage'
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return '—'
@@ -36,16 +42,17 @@ function DatasetTable({ data }: { data: BootstrapResponse }) {
         <thead>
           <tr>
             <th>日期</th><th>類型</th><th>標的</th><th>幣別</th>
-            <th className="numeric">股數</th><th className="numeric">價格</th><th className="numeric">原幣金額</th>
+            <th className="numeric">股數</th><th className="numeric">價格</th><th className="numeric">原幣金額</th><th>交易 ID</th>
           </tr>
         </thead>
         <tbody>
           {data.transactions.slice(0, 100).map((row) => (
-            <tr key={`${row.sourceRowNumber}-${row.rowHash}`}>
+            <tr key={row.transactionId || row.rowHash}>
               <td>{row.tradeDate}</td><td>{row.transactionType}</td><td>{row.ticker || '—'}</td><td>{row.currency}</td>
               <td className="numeric">{row.quantity.toLocaleString()}</td>
               <td className="numeric">{row.price.toLocaleString()}</td>
               <td className="numeric">{row.amountForeign.toLocaleString()}</td>
+              <td title={row.transactionId || row.rowHash}>{(row.transactionId || row.rowHash).slice(0, 8)}</td>
             </tr>
           ))}
         </tbody>
@@ -198,6 +205,7 @@ export default function App() {
   const [parseResult, setParseResult] = useState<ParseResult | null>(null)
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [diff, setDiff] = useState<DatasetDiff | null>(null)
+  const [candidateLineage, setCandidateLineage] = useState<TransactionLineageSummary | null>(null)
   const [candidateGate, setCandidateGate] = useState<DatasetActivationGate | null>(null)
   const [busy, setBusy] = useState(false)
   const [offline, setOffline] = useState(false)
@@ -208,6 +216,7 @@ export default function App() {
     setParseResult(null)
     setPendingFile(null)
     setDiff(null)
+    setCandidateLineage(null)
     setCandidateGate(null)
   }
 
@@ -260,11 +269,13 @@ export default function App() {
       }
       setParseResult(result)
       setDiff(compareTransactionSets(bootstrap.transactions, result.transactions))
+      setCandidateLineage(planTransactionLineage(bootstrap.transactions, result.transactions).summary)
       setCandidateGate(localGate)
 
       if (!offline) {
         const cloudPreview = await api.preview(payload)
         setDiff(cloudPreview.diff)
+        setCandidateLineage(cloudPreview.lineage)
         setCandidateGate(cloudPreview.activationGate)
         setMessage([...result.warnings, ...cloudPreview.warnings].join('；'))
       } else {
@@ -366,6 +377,9 @@ export default function App() {
               <div className="diff-card"><span>新版筆數</span><strong>{diff.newRowCount.toLocaleString()}</strong></div>
               <div className="diff-card positive"><span>新增</span><strong>+{diff.added.toLocaleString()}</strong></div>
               <div className="diff-card negative"><span>刪除／變更</span><strong>-{diff.removed.toLocaleString()}</strong></div>
+              <div className="diff-card positive"><span>保留交易 ID</span><strong>{candidateLineage?.unchanged.toLocaleString() ?? '—'}</strong></div>
+              <div className="diff-card"><span>更正追蹤</span><strong>{candidateLineage?.corrected.toLocaleString() ?? '—'}</strong></div>
+              <div className={`diff-card ${(candidateLineage?.ambiguous ?? 0) > 0 ? 'negative' : 'positive'}`}><span>血緣不確定</span><strong>{candidateLineage?.ambiguous.toLocaleString() ?? '—'}</strong></div>
               <div className="diff-card"><span>拒收列</span><strong>{parseResult.rejected.length.toLocaleString()}</strong></div>
               <div className={`diff-card ${candidateBlockers > 0 ? 'negative' : 'positive'}`}><span>帳務／資金阻擋</span><strong>{candidateBlockers.toLocaleString()}</strong></div>
               <div className="preview-actions">

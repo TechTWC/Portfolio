@@ -29,12 +29,13 @@
 
 ## Phase 2 — dataset operations
 
+- 交易血緣、估值 Revision 綁定與 STALE 控制（v0.8）
 - 資料版本列表
 - 還原 ARCHIVED 版本
 - 匯出標準化 CSV／JSON
 - parser schema mapping UI
 - 新增／刪除／修改明細預覽
-- R2 原始檔備份，選配
+- R2 原始檔備份，選配；個人使用階段不啟用，避免新增成本
 
 ## Phase 3 — portfolio analysis web UI
 

@@ -1,5 +1,7 @@
 import { z } from 'zod'
+import type { StoredTransaction } from './contracts'
 import type { PointInTimeValuation, ValuationMark } from './valuation'
+import type { ValuationFreshness } from './valuation-lineage'
 
 export const VALUATION_MARK_TYPES = ['PRICE', 'FX'] as const
 export const valuationMarkTypeSchema = z.enum(VALUATION_MARK_TYPES)
@@ -21,6 +23,8 @@ export const normalizedValuationMarkSchema = z.object({
 
 export const valuationSnapshotUploadSchema = z.object({
   baseRevision: z.number().int().nonnegative(),
+  transactionDatasetId: z.string().uuid(),
+  transactionRevision: z.number().int().positive(),
   valuationDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   filename: z.string().min(1).max(255),
   fileHash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -44,6 +48,8 @@ export type ValuationSnapshotSummary = {
   markCount: number
   earliestMarkDate: string | null
   latestMarkDate: string | null
+  transactionDatasetId: string
+  transactionRevision: number
   createdAt: string
   activatedAt: string | null
 }
@@ -66,8 +72,12 @@ export type ValuationSnapshotDiff = {
 
 export type ValuationBootstrapResponse = {
   valuationRevision: number
+  currentTransactionDatasetId: string | null
+  currentTransactionRevision: number
+  freshness: ValuationFreshness
   activeSnapshot: ValuationSnapshotSummary | null
   marks: NormalizedValuationMark[]
+  transactions: StoredTransaction[]
   valuation: PointInTimeValuation | null
 }
 

@@ -2,8 +2,9 @@ import type {
   BootstrapResponse,
   DatasetSummary,
   DatasetUpload,
-  NormalizedTransaction,
+  StoredTransaction,
 } from '../src/lib/contracts'
+import { planTransactionLineage } from '../src/lib/transaction-lineage'
 
 type User = { id: string; email: string }
 
@@ -22,9 +23,10 @@ type DatasetRow = {
 }
 
 type TransactionRow = {
+  transaction_id: string
   source_row_number: number
   trade_date: string
-  transaction_type: NormalizedTransaction['transactionType']
+  transaction_type: StoredTransaction['transactionType']
   ticker: string
   currency: string
   quantity: number
@@ -54,8 +56,9 @@ function datasetSummary(row: DatasetRow): DatasetSummary {
   }
 }
 
-function transactionFromRow(row: TransactionRow): NormalizedTransaction {
+function transactionFromRow(row: TransactionRow): StoredTransaction {
   return {
+    transactionId: row.transaction_id,
     sourceRowNumber: row.source_row_number,
     tradeDate: row.trade_date,
     transactionType: row.transaction_type,
@@ -93,7 +96,7 @@ export async function getBootstrap(db: D1Database, user: User): Promise<Bootstra
   }
 
   const rows = await db.prepare(
-    `SELECT source_row_number, trade_date, transaction_type, ticker, currency,
+    `SELECT transaction_id, source_row_number, trade_date, transaction_type, ticker, currency,
             quantity, price, amount_foreign, fx_rate, fee, budget_waterline,
             budget_balance, note, row_hash
        FROM transactions
@@ -109,24 +112,45 @@ export async function getBootstrap(db: D1Database, user: User): Promise<Bootstra
   }
 }
 
-export async function getActiveTransactions(db: D1Database, userId: string): Promise<NormalizedTransaction[]> {
+export type PortfolioState = {
+  activeDatasetId: string | null
+  cloudRevision: number
+}
+
+export async function getPortfolioState(db: D1Database, userId: string): Promise<PortfolioState> {
+  const state = await db.prepare(
+    'SELECT active_dataset_id, cloud_revision FROM portfolio_state WHERE user_id = ?',
+  ).bind(userId).first<{ active_dataset_id: string | null; cloud_revision: number }>()
+  return {
+    activeDatasetId: state?.active_dataset_id ?? null,
+    cloudRevision: state?.cloud_revision ?? 0,
+  }
+}
+
+export async function getTransactionsForDataset(
+  db: D1Database,
+  userId: string,
+  datasetId: string,
+): Promise<StoredTransaction[]> {
   const rows = await db.prepare(
-    `SELECT t.source_row_number, t.trade_date, t.transaction_type, t.ticker, t.currency,
+    `SELECT t.transaction_id, t.source_row_number, t.trade_date, t.transaction_type, t.ticker, t.currency,
             t.quantity, t.price, t.amount_foreign, t.fx_rate, t.fee,
             t.budget_waterline, t.budget_balance, t.note, t.row_hash
        FROM transactions t
-       JOIN portfolio_state s ON s.active_dataset_id = t.dataset_id
-      WHERE s.user_id = ? AND t.user_id = ?
+      WHERE t.dataset_id = ? AND t.user_id = ?
       ORDER BY t.trade_date, t.source_row_number`,
-  ).bind(userId, userId).all<TransactionRow>()
+  ).bind(datasetId, userId).all<TransactionRow>()
   return rows.results.map(transactionFromRow)
 }
 
+export async function getActiveTransactions(db: D1Database, userId: string): Promise<StoredTransaction[]> {
+  const state = await getPortfolioState(db, userId)
+  if (!state.activeDatasetId) return []
+  return getTransactionsForDataset(db, userId, state.activeDatasetId)
+}
+
 export async function currentRevision(db: D1Database, userId: string): Promise<number> {
-  const state = await db.prepare(
-    'SELECT cloud_revision FROM portfolio_state WHERE user_id = ?',
-  ).bind(userId).first<{ cloud_revision: number }>()
-  return state?.cloud_revision ?? 0
+  return (await getPortfolioState(db, userId)).cloudRevision
 }
 
 function dateRange(payload: DatasetUpload): { earliest: string; latest: string } {
@@ -147,6 +171,10 @@ export async function activateDataset(
     'SELECT active_dataset_id FROM portfolio_state WHERE user_id = ? AND cloud_revision = ?',
   ).bind(user.id, payload.baseRevision).first<{ active_dataset_id: string | null }>()
   if (!stateBefore) throw new Error('VERSION_CONFLICT')
+  const previousTransactions = stateBefore.active_dataset_id
+    ? await getTransactionsForDataset(db, user.id, stateBefore.active_dataset_id)
+    : []
+  const lineage = planTransactionLineage(previousTransactions, payload.transactions)
 
   await db.prepare(
     `INSERT INTO portfolio_datasets
@@ -163,23 +191,24 @@ export async function activateDataset(
     payload.transactions.length,
     earliest,
     latest,
-    JSON.stringify(validation),
+    JSON.stringify({ ...validation, transactionLineage: lineage.summary }),
   ).run()
 
   try {
     const chunkSize = 100
     for (let offset = 0; offset < payload.transactions.length; offset += chunkSize) {
-      const chunk = payload.transactions.slice(offset, offset + chunkSize)
-      const statements = chunk.map((row) => db.prepare(
+      const chunk = lineage.rows.slice(offset, offset + chunkSize)
+      const statements = chunk.map(({ transaction: row, transactionId }) => db.prepare(
         `INSERT INTO transactions
-          (id, dataset_id, user_id, source_row_number, trade_date, transaction_type,
+          (id, dataset_id, user_id, transaction_id, source_row_number, trade_date, transaction_type,
            ticker, currency, quantity, price, amount_foreign, fx_rate, fee,
            budget_waterline, budget_balance, note, row_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         crypto.randomUUID(),
         datasetId,
         user.id,
+        transactionId ?? crypto.randomUUID(),
         row.sourceRowNumber,
         row.tradeDate,
         row.transactionType,

@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie'
-import type { BootstrapResponse } from './contracts'
+import type { BootstrapResponse, StoredTransaction } from './contracts'
 
 type CachedPortfolio = {
   key: string
@@ -27,7 +27,14 @@ export async function readCachedBootstrap(): Promise<BootstrapResponse | null> {
   const userId = localStorage.getItem(LAST_USER_KEY)
   if (!userId) return null
   const cached = await db.portfolios.get(`active:${userId}`)
-  return cached?.payload ?? null
+  if (!cached) return null
+  return {
+    ...cached.payload,
+    transactions: cached.payload.transactions.map((row) => ({
+      ...row,
+      transactionId: (row as Partial<StoredTransaction>).transactionId || `legacy:${row.rowHash}`,
+    })),
+  }
 }
 
 export async function writeCachedBootstrap(payload: BootstrapResponse): Promise<void> {

@@ -24,6 +24,9 @@
 - 409 revision conflict 防護
 - IndexedDB 離線快取與跨瀏覽器雲端還原
 - 拒收列不得啟用
+- 跨資料集穩定交易 ID 與保守的交易更正血緣
+- 估值 Snapshot 綁定精確交易 Dataset／Revision
+- 交易更新後估值顯示 `STALE`，舊結果仍以原交易版本重現
 
 ### Python reference engine fixes（下一批推送）
 
@@ -53,7 +56,7 @@
 portfolio-analyzer-cloud/
 ├─ src/                    React UI、parser、IndexedDB、shared contracts
 ├─ worker/                 Hono API、Access auth、D1 repository
-├─ migrations/             D1 schema
+├─ migrations/             D1 schema、交易血緣與估值版本綁定
 ├─ tests/                  TypeScript tests
 ├─ reference/python/       修正後 Python 投資組合引擎
 ├─ reference/mdd/          修正後 MDD reference app/engine

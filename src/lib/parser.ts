@@ -11,7 +11,7 @@ import {
   MAX_SPREADSHEET_ROWS_TO_READ,
 } from './spreadsheet-safety'
 
-export const PARSER_VERSION = 'cloud-v0.1.6'
+export const PARSER_VERSION = 'cloud-v0.1.8'
 
 const INVALID_EXCEL_FILE_MESSAGE = 'Excel 檔案損壞或副檔名與格式不符；請確認檔案可正常開啟後重新上傳'
 
@@ -104,20 +104,38 @@ function nullableNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+function calendarDateToIso(year: number, month: number, day: number): string {
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
 function excelDateToIso(value: unknown): string {
   if (value instanceof Date && !Number.isNaN(value.valueOf())) {
-    return value.toISOString().slice(0, 10)
+    // Spreadsheet dates are calendar days, not instants in time. Using
+    // toISOString() can shift a Taiwan-local midnight to the previous UTC day.
+    return calendarDateToIso(value.getFullYear(), value.getMonth() + 1, value.getDate())
   }
   if (typeof value === 'number') {
     const parsed = XLSX.SSF.parse_date_code(value)
-    if (parsed) {
-      return `${String(parsed.y).padStart(4, '0')}-${String(parsed.m).padStart(2, '0')}-${String(parsed.d).padStart(2, '0')}`
-    }
+    if (parsed) return calendarDateToIso(parsed.y, parsed.m, parsed.d)
   }
-  const raw = String(value ?? '').trim().replaceAll('/', '-')
-  const parsed = new Date(raw)
-  if (Number.isNaN(parsed.valueOf())) throw new Error(`無法辨識日期：${raw || '(空白)'}`)
-  return parsed.toISOString().slice(0, 10)
+  const raw = String(value ?? '').trim()
+  const components = /^(\d{4})([-/])(\d{1,2})\2(\d{1,2})$/.exec(raw)
+  if (!components) throw new Error(`無法辨識日期：${raw || '(空白)'}`)
+
+  const year = Number(components[1])
+  const month = Number(components[3])
+  const day = Number(components[4])
+  const parsed = new Date(0)
+  parsed.setUTCHours(0, 0, 0, 0)
+  parsed.setUTCFullYear(year, month - 1, day)
+  if (
+    parsed.getUTCFullYear() !== year
+    || parsed.getUTCMonth() + 1 !== month
+    || parsed.getUTCDate() !== day
+  ) {
+    throw new Error(`無法辨識日期：${raw}`)
+  }
+  return calendarDateToIso(year, month, day)
 }
 
 function normalizeTicker(value: unknown): string {
@@ -282,7 +300,9 @@ export async function parseTransactionFile(file: File): Promise<ParseResult> {
   try {
     workbook = XLSX.read(buffer, {
       type: 'array',
-      cellDates: true,
+      // Keep spreadsheet calendar dates as raw strings or serial numbers.
+      // Converting them to JS Date objects can introduce timezone date shifts.
+      cellDates: false,
       sheetRows: MAX_SPREADSHEET_ROWS_TO_READ,
     })
   } catch {

@@ -4,6 +4,7 @@ import { buildCashFundingLedger } from '../src/lib/cash-ledger'
 import { datasetUploadSchema } from '../src/lib/contracts'
 import { validateDatasetForActivation } from '../src/lib/dataset-gate'
 import { compareTransactionSets } from '../src/lib/diff'
+import { planTransactionLineage } from '../src/lib/transaction-lineage'
 import { buildPointInTimeValuation } from '../src/lib/valuation'
 import {
   toValuationMark,
@@ -11,8 +12,16 @@ import {
   type ValuationSnapshotUpload,
 } from '../src/lib/valuation-contracts'
 import { compareValuationMarks } from '../src/lib/valuation-diff'
+import { transactionBindingMatches } from '../src/lib/valuation-lineage'
 import { requireUser, type Bindings, type Variables } from './auth'
-import { activateDataset, currentRevision, getActiveTransactions, getBootstrap } from './repository'
+import {
+  activateDataset,
+  currentRevision,
+  getActiveTransactions,
+  getBootstrap,
+  getPortfolioState,
+  getTransactionsForDataset,
+} from './repository'
 import {
   activateValuationSnapshot,
   currentValuationRevision,
@@ -53,6 +62,7 @@ app.post('/api/datasets/preview', async (c) => {
 
   const oldRows = await getActiveTransactions(c.env.DB, user.id)
   const diff = compareTransactionSets(oldRows, parsed.data.transactions)
+  const lineage = planTransactionLineage(oldRows, parsed.data.transactions)
   const warnings: string[] = []
   if (parsed.data.rejectedRowCount > 0) {
     warnings.push(`新檔案有 ${parsed.data.rejectedRowCount} 列未通過驗證，修正前不能啟用`)
@@ -62,13 +72,16 @@ app.post('/api/datasets/preview', async (c) => {
   if (parsed.data.transactions.some((row) => row.currency !== 'TWD' && row.fxRate === null)) {
     warnings.push('部分外幣交易缺少輸入匯率，財務引擎將需要市場匯率 fallback')
   }
+  if (lineage.summary.ambiguous > 0) {
+    warnings.push(`${lineage.summary.ambiguous} 筆重複交易無法安全判定更正血緣，將建立新的交易 ID`)
+  }
 
   const activationGate = validateDatasetForActivation(parsed.data.transactions)
   if (activationGate.blockingIssueCount > 0) {
     warnings.push(`新檔案有 ${activationGate.blockingIssueCount} 項帳務或資金阻擋錯誤，修正前不能啟用`)
   }
 
-  return c.json({ diff, warnings, activationGate })
+  return c.json({ diff, lineage: lineage.summary, warnings, activationGate })
 })
 
 app.post('/api/datasets/activate', async (c) => {
@@ -125,7 +138,7 @@ async function evaluateValuationCandidate(
   userId: string,
   payload: ValuationSnapshotUpload,
 ) {
-  const transactions = await getActiveTransactions(db, userId)
+  const transactions = await getTransactionsForDataset(db, userId, payload.transactionDatasetId)
   const accounting = buildPortfolioAccounting(transactions)
   const cashLedger = buildCashFundingLedger(transactions)
   const valuation = buildPointInTimeValuation({
@@ -153,6 +166,18 @@ app.post('/api/valuations/preview', async (c) => {
       code: 'VALUATION_VERSION_CONFLICT',
       baseRevision: parsed.data.baseRevision,
       currentRevision: revision,
+    }, 409)
+  }
+  const transactionState = await getPortfolioState(c.env.DB, user.id)
+  if (!transactionBindingMatches({
+    transactionDatasetId: parsed.data.transactionDatasetId,
+    transactionRevision: parsed.data.transactionRevision,
+  }, transactionState)) {
+    return c.json({
+      error: `此估值候選使用交易 v${parsed.data.transactionRevision}，雲端目前為 v${transactionState.cloudRevision}`,
+      code: 'TRANSACTION_VERSION_CONFLICT',
+      baseRevision: parsed.data.transactionRevision,
+      currentRevision: transactionState.cloudRevision,
     }, 409)
   }
 
@@ -193,6 +218,18 @@ app.post('/api/valuations/activate', async (c) => {
       currentRevision: revision,
     }, 409)
   }
+  const transactionState = await getPortfolioState(c.env.DB, user.id)
+  if (!transactionBindingMatches({
+    transactionDatasetId: parsed.data.transactionDatasetId,
+    transactionRevision: parsed.data.transactionRevision,
+  }, transactionState)) {
+    return c.json({
+      error: `此估值候選使用交易 v${parsed.data.transactionRevision}，雲端目前為 v${transactionState.cloudRevision}`,
+      code: 'TRANSACTION_VERSION_CONFLICT',
+      baseRevision: parsed.data.transactionRevision,
+      currentRevision: transactionState.cloudRevision,
+    }, 409)
+  }
   if (parsed.data.rejectedRowCount > 0 || parsed.data.sourceRowCount !== parsed.data.marks.length) {
     return c.json({ error: '估值檔仍有未通過驗證的資料列，不能啟用' }, 400)
   }
@@ -218,6 +255,15 @@ app.post('/api/valuations/activate', async (c) => {
       totalAssetsTwd: valuation.totalAssetsTwd,
     })
   } catch (error) {
+    if (error instanceof Error && error.message === 'TRANSACTION_VERSION_CONFLICT') {
+      const latest = await getPortfolioState(c.env.DB, user.id)
+      return c.json({
+        error: `交易版本已在估值啟用期間變更；候選使用 v${parsed.data.transactionRevision}，雲端目前為 v${latest.cloudRevision}`,
+        code: 'TRANSACTION_VERSION_CONFLICT',
+        baseRevision: parsed.data.transactionRevision,
+        currentRevision: latest.cloudRevision,
+      }, 409)
+    }
     if (error instanceof Error && (error.message.includes('UNIQUE') || error.message === 'VALUATION_VERSION_CONFLICT')) {
       const latestRevision = await currentValuationRevision(c.env.DB, user.id)
       return c.json({
