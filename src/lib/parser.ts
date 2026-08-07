@@ -2,8 +2,18 @@ import * as XLSX from 'xlsx'
 import type { NormalizedTransaction } from './contracts'
 import { normalizedTransactionSchema } from './contracts'
 import { sha256Hex, stableTransactionValue } from './hash'
+import {
+  assertSpreadsheetFileSize,
+  assertSpreadsheetRowCount,
+  assertWorksheetWasNotTruncated,
+  assertXlsxZipExpansionIsSafe,
+  isZipContainer,
+  MAX_SPREADSHEET_ROWS_TO_READ,
+} from './spreadsheet-safety'
 
-export const PARSER_VERSION = 'cloud-v0.1.0'
+export const PARSER_VERSION = 'cloud-v0.1.6'
+
+const INVALID_EXCEL_FILE_MESSAGE = 'Excel 檔案損壞或副檔名與格式不符；請確認檔案可正常開啟後重新上傳'
 
 const COLUMN_ALIASES: Record<string, string[]> = {
   tradeDate: ['日期', '交易日期', 'date', 'datetime', 'trade_date'],
@@ -52,6 +62,25 @@ const TYPE_ALIASES: Record<string, NormalizedTransaction['transactionType']> = {
 
 function normalizeHeader(value: string): string {
   return value.trim().toLowerCase().replaceAll(' ', '').replaceAll('_', '')
+}
+
+function hasPrefix(bytes: Uint8Array, prefix: number[]): boolean {
+  return prefix.every((value, index) => bytes[index] === value)
+}
+
+function assertExcelContainerMatchesExtension(file: File, buffer: ArrayBuffer): void {
+  const extension = file.name.toLowerCase().match(/\.([^.]+)$/)?.[1]
+  const bytes = new Uint8Array(buffer)
+
+  if (extension === 'xlsx' && !hasPrefix(bytes, [0x50, 0x4b, 0x03, 0x04])) {
+    throw new Error(INVALID_EXCEL_FILE_MESSAGE)
+  }
+
+  if (extension === 'xls') {
+    const isCompoundBinary = hasPrefix(bytes, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])
+    const isRawBiff = bytes[0] === 0x09 && [0x00, 0x02, 0x04, 0x08].includes(bytes[1])
+    if (!isCompoundBinary && !isRawBiff) throw new Error(INVALID_EXCEL_FILE_MESSAGE)
+  }
 }
 
 function keyFor(row: Record<string, unknown>, canonical: string): unknown {
@@ -197,6 +226,7 @@ export async function parseTransactionRows(
   fileHash = '0'.repeat(64),
 ): Promise<ParseResult> {
   if (rows.length === 0) throw new Error('檔案沒有交易資料')
+  assertSpreadsheetRowCount(rows)
 
   const transactions: NormalizedTransaction[] = []
   const rejected: ParseResult['rejected'] = []
@@ -243,12 +273,26 @@ export async function parseTransactionRows(
 }
 
 export async function parseTransactionFile(file: File): Promise<ParseResult> {
+  assertSpreadsheetFileSize(file)
   const buffer = await file.arrayBuffer()
   const fileHash = await sha256Hex(buffer)
-  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true })
+  assertExcelContainerMatchesExtension(file, buffer)
+  if (isZipContainer(buffer)) await assertXlsxZipExpansionIsSafe(buffer)
+  let workbook: XLSX.WorkBook
+  try {
+    workbook = XLSX.read(buffer, {
+      type: 'array',
+      cellDates: true,
+      sheetRows: MAX_SPREADSHEET_ROWS_TO_READ,
+    })
+  } catch {
+    throw new Error(INVALID_EXCEL_FILE_MESSAGE)
+  }
   const firstSheet = workbook.SheetNames[0]
-  if (!firstSheet) throw new Error('檔案沒有可讀取的工作表')
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[firstSheet], {
+  if (!firstSheet) throw new Error(INVALID_EXCEL_FILE_MESSAGE)
+  const worksheet = workbook.Sheets[firstSheet]
+  assertWorksheetWasNotTruncated(worksheet)
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
     defval: '',
     raw: true,
   })

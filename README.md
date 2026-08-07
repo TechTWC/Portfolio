@@ -73,10 +73,13 @@ cp .dev.vars.example .dev.vars
 3. 建立本機 D1 並執行 migration：
 
 ```bash
-npm install
+npm ci
 npm run db:migrate:local
 npm run dev
 ```
+
+`xlsx` 使用已提交至 `vendor/` 的 SheetJS CE 0.20.3 官方套件。首次取得或更新
+其他 npm 相依套件時仍需連線至 npm registry；SheetJS 本身不需要連線至外部 CDN。
 
 ## 測試
 
@@ -84,6 +87,8 @@ npm run dev
 npm test
 npm run typecheck
 npm run build
+npm run audit:production
+npm run audit:all
 
 python -m pytest reference/python/tests -q
 python -m pytest reference/mdd/tests -q
