@@ -1,4 +1,9 @@
-import type { BootstrapResponse, DatasetDiff, DatasetUpload } from './contracts'
+import type {
+  BootstrapResponse,
+  DatasetDiff,
+  DatasetUpload,
+  TransactionLineageSummary,
+} from './contracts'
 import { publishPortfolioDataUpdate } from './data-sync'
 import type { DatasetActivationGate } from './dataset-gate'
 import type {
@@ -67,7 +72,12 @@ function publishAfterCurrentHandler(update: Parameters<typeof publishPortfolioDa
 export const api = {
   bootstrap: () => requestJson<BootstrapResponse>('/api/bootstrap'),
   preview: (payload: DatasetUpload) =>
-    requestJson<{ diff: DatasetDiff; warnings: string[]; activationGate: DatasetActivationGate }>('/api/datasets/preview', {
+    requestJson<{
+      diff: DatasetDiff
+      lineage: TransactionLineageSummary
+      warnings: string[]
+      activationGate: DatasetActivationGate
+    }>('/api/datasets/preview', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),

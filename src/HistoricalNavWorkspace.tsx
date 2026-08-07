@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from './lib/api'
-import type { BootstrapResponse } from './lib/contracts'
 import { deriveHistoricalNavDates } from './lib/historical-nav-schedule'
 import {
   buildHistoricalPerformanceSeries,
@@ -89,38 +88,34 @@ function LineChart({
 }
 
 export default function HistoricalNavWorkspace() {
-  const [transactions, setTransactions] = useState<BootstrapResponse | null>(null)
   const [valuation, setValuation] = useState<ValuationBootstrapResponse | null>(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    Promise.all([api.bootstrap(), api.valuationBootstrap()])
-      .then(([transactionData, valuationData]) => {
-        setTransactions(transactionData)
-        setValuation(valuationData)
-      })
+    api.valuationBootstrap()
+      .then(setValuation)
       .catch((loadError) => setError(loadError instanceof Error ? loadError.message : String(loadError)))
   }, [])
 
   const result = useMemo(() => {
-    if (!transactions || !valuation) return null
+    if (!valuation) return null
     const marks = valuation.marks.map(toValuationMark)
     const activeValuationDate = valuation.activeSnapshot?.valuationDate ?? null
     const dates = deriveHistoricalNavDates(
       marks,
       activeValuationDate,
-      transactions.transactions,
+      valuation.transactions,
     )
     return buildHistoricalPerformanceSeries({
-      transactions: transactions.transactions,
+      transactions: valuation.transactions,
       marks,
       dates,
-      transactionRevision: transactions.cloudRevision,
+      transactionRevision: valuation.activeSnapshot?.transactionRevision ?? 0,
       valuationRevision: valuation.valuationRevision,
       valuationSnapshotId: valuation.activeSnapshot?.id ?? null,
       valuationDate: activeValuationDate,
     })
-  }, [transactions, valuation])
+  }, [valuation])
 
   const series = result?.navSeries ?? null
   const performance = result?.performance ?? null
@@ -139,10 +134,15 @@ export default function HistoricalNavWorkspace() {
       </div></div>
 
       {error && <div className="banner error">{error}</div>}
+      {valuation?.freshness === 'STALE' && (
+        <div className="banner error">
+          歷史績效鎖定交易 v{valuation.activeSnapshot?.transactionRevision ?? '—'}；目前交易為 v{valuation.currentTransactionRevision}。結果可重現但已過期，重新啟用估值前請勿視為目前績效。
+        </div>
+      )}
       {!series || !performance || !provenance ? <div className="empty-state">正在重建歷史 NAV 與績效…</div> : (
         <>
           <div className="metrics-grid">
-            <Metric label="績效狀態" value={performance.complete ? '完整' : '待補資料'} hint={performance.complete ? 'NAV、TWR 與回撤可追溯' : `${performance.blockingIssueCount} 項績效阻擋問題`} />
+            <Metric label="績效狀態" value={valuation?.freshness === 'STALE' ? 'STALE' : performance.complete ? '完整' : '待補資料'} hint={valuation?.freshness === 'STALE' ? `綁定交易 v${valuation.activeSnapshot?.transactionRevision ?? '—'}` : performance.complete ? 'NAV、TWR 與回撤可追溯' : `${performance.blockingIssueCount} 項績效阻擋問題`} />
             <Metric label="歷史觀察點" value={performance.points.length.toLocaleString()} hint="含期初、PRICE／FX 日期、外部資金流與 ACTIVE 估值日" />
             <Metric label="完整 NAV 點" value={series.completePointCount.toLocaleString()} />
             <Metric label="不完整 NAV 點" value={series.incompletePointCount.toLocaleString()} hint={series.incompletePointCount > 0 ? '缺少價格、匯率或帳務資料' : '所有觀察點可完整估值'} />

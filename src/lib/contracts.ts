@@ -56,6 +56,10 @@ export const datasetUploadSchema = z.object({
 export type NormalizedTransaction = z.infer<typeof normalizedTransactionSchema>
 export type DatasetUpload = z.infer<typeof datasetUploadSchema>
 
+export type StoredTransaction = NormalizedTransaction & {
+  transactionId: string
+}
+
 export type DatasetSummary = {
   id: string
   revision: number
@@ -74,7 +78,15 @@ export type BootstrapResponse = {
   user: { id: string; email: string }
   cloudRevision: number
   activeDataset: DatasetSummary | null
-  transactions: NormalizedTransaction[]
+  transactions: StoredTransaction[]
+}
+
+export type TransactionLineageSummary = {
+  unchanged: number
+  corrected: number
+  added: number
+  removed: number
+  ambiguous: number
 }
 
 export type TransactionChangeSample = Pick<

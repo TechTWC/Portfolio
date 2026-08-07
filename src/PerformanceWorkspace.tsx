@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from './lib/api'
-import type { BootstrapResponse } from './lib/contracts'
 import { buildCurrentPerformance } from './lib/performance'
 import type { ValuationBootstrapResponse } from './lib/valuation-contracts'
 
@@ -36,27 +35,23 @@ const KIND_LABEL = {
 } as const
 
 export default function PerformanceWorkspace() {
-  const [transactions, setTransactions] = useState<BootstrapResponse | null>(null)
   const [valuation, setValuation] = useState<ValuationBootstrapResponse | null>(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    Promise.all([api.bootstrap(), api.valuationBootstrap()])
-      .then(([transactionData, valuationData]) => {
-        setTransactions(transactionData)
-        setValuation(valuationData)
-      })
+    api.valuationBootstrap()
+      .then(setValuation)
       .catch((loadError) => setError(loadError instanceof Error ? loadError.message : String(loadError)))
   }, [])
 
   const result = useMemo(() => buildCurrentPerformance({
-    transactions: transactions?.transactions ?? [],
+    transactions: valuation?.transactions ?? [],
     valuationDate: valuation?.activeSnapshot?.valuationDate ?? null,
     valuationComplete: valuation?.valuation?.complete ?? false,
     terminalAssetsTwd: valuation?.valuation?.totalAssetsTwd ?? null,
-  }), [transactions, valuation])
+  }), [valuation])
 
-  const loading = !transactions || !valuation
+  const loading = !valuation
 
   return (
     <section className="panel" id="performance-xirr">
@@ -67,13 +62,18 @@ export default function PerformanceWorkspace() {
       </div></div>
 
       {error && <div className="banner error">{error}</div>}
+      {valuation?.freshness === 'STALE' && (
+        <div className="banner error">
+          XIRR 鎖定交易 v{valuation.activeSnapshot?.transactionRevision ?? '—'}；目前交易為 v{valuation.currentTransactionRevision}。結果可重現但已過期，重新啟用估值前請勿視為目前報酬。
+        </div>
+      )}
       {loading ? <div className="empty-state">正在載入交易與估值資料…</div> : (
         <>
           <div className="metrics-grid">
             <Metric
               label="績效狀態"
-              value={result.complete ? '完整' : '不完整'}
-              hint={result.complete ? '外部資金流與期末估值可年化' : `${result.blockingIssueCount} 項阻擋問題`}
+              value={valuation?.freshness === 'STALE' ? 'STALE' : result.complete ? '完整' : '不完整'}
+              hint={valuation?.freshness === 'STALE' ? `綁定交易 v${valuation.activeSnapshot?.transactionRevision ?? '—'}` : result.complete ? '外部資金流與期末估值可年化' : `${result.blockingIssueCount} 項阻擋問題`}
             />
             <Metric label="績效截止日" value={result.valuationDate ?? '—'} hint="使用 ACTIVE 估值日" />
             <Metric label="累計投入" value={formatAmount(result.grossContributionsTwd)} hint="CASH_IN，以 TWD 換算" />

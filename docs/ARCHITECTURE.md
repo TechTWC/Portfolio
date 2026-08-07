@@ -26,7 +26,8 @@ Cloudflare Worker + Hono
 Cloudflare D1
         ├─ ACTIVE canonical dataset
         ├─ ARCHIVED versions
-        ├─ normalized transactions
+        ├─ normalized transactions + stable transaction_id
+        ├─ valuation → transaction dataset lineage
         └─ cloud_revision
 ```
 
@@ -54,7 +55,23 @@ Upload
 
 技術失敗時刪除未完成的 PENDING dataset；舊 ACTIVE 資料保持不變。
 
-## 4. Concurrency
+交易資料庫列另保存邏輯 `transaction_id`。完全相同的交易即使換列順序也沿用 ID；
+更正只有在來源列或語意鍵能一對一安全配對時才沿用 ID。重複而無法判定的交易不猜測，
+會建立新 ID，避免把兩筆不同交易錯誤合併成同一血緣。
+
+## 4. Valuation lineage and freshness
+
+每個估值 Snapshot 保存建立當下的 `transaction_dataset_id` 與 `transaction_revision`。
+所有估值、XIRR、歷史 NAV、TWR 與回撤都使用該綁定版本，不再與最新交易版本任意組合。
+
+- 綁定版本等於目前 ACTIVE 交易：`CURRENT`
+- 交易已更新：`STALE`，但舊數字仍可用原交易版本重現
+- 尚無估值：`NO_SNAPSHOT`
+
+估值 preview 與 activate 都會核對交易綁定；兩步之間若交易版本改變，回傳
+`409 TRANSACTION_VERSION_CONFLICT`，使用者必須重新預覽。
+
+## 5. Concurrency
 
 每次上傳帶入 `baseRevision`。若雲端 revision 已改變，API 回傳：
 
@@ -66,7 +83,7 @@ Upload
 
 `UNIQUE(user_id, revision)` 同時扮演 revision reservation，避免兩個裝置同時建立相同下一版。
 
-## 5. Authentication
+## 6. Authentication
 
 正式環境只接受 Cloudflare Access 注入的：
 
@@ -83,7 +100,7 @@ AUTH_MODE=dev
 DEV_USER_EMAIL=local@example.com
 ```
 
-## 6. Analysis migration strategy
+## 7. Analysis migration strategy
 
 不一次重寫全部 Python 演算法。
 

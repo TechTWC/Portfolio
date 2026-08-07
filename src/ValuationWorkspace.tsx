@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError, api } from './lib/api'
-import type { BootstrapResponse } from './lib/contracts'
 import { buildFxCostPool } from './lib/fx-cost-pool'
 import type {
   ValuationBootstrapResponse,
@@ -41,7 +40,6 @@ function positionKey(ticker: string, currency: string): string {
 
 export default function ValuationWorkspace() {
   const [bootstrap, setBootstrap] = useState<ValuationBootstrapResponse | null>(null)
-  const [portfolioBootstrap, setPortfolioBootstrap] = useState<BootstrapResponse | null>(null)
   const [parseResult, setParseResult] = useState<ValuationParseResult | null>(null)
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<ValuationPreviewResponse | null>(null)
@@ -60,12 +58,7 @@ export default function ValuationWorkspace() {
   async function loadValuation() {
     setError('')
     try {
-      const [valuationBootstrap, transactionBootstrap] = await Promise.all([
-        api.valuationBootstrap(),
-        api.bootstrap(),
-      ])
-      setBootstrap(valuationBootstrap)
-      setPortfolioBootstrap(transactionBootstrap)
+      setBootstrap(await api.valuationBootstrap())
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError))
     }
@@ -79,8 +72,13 @@ export default function ValuationWorkspace() {
     setBusy(true)
     try {
       const result = await parseValuationFile(file)
+      if (!bootstrap.currentTransactionDatasetId) {
+        throw new Error('目前沒有 ACTIVE 交易資料，不能建立估值')
+      }
       const payload: ValuationSnapshotUpload = {
         baseRevision: bootstrap.valuationRevision,
+        transactionDatasetId: bootstrap.currentTransactionDatasetId,
+        transactionRevision: bootstrap.currentTransactionRevision,
         valuationDate: result.valuationDate,
         filename: file.name,
         fileHash: result.fileHash,
@@ -94,10 +92,10 @@ export default function ValuationWorkspace() {
       setPreview(cloudPreview)
       setMessage([...result.warnings, ...cloudPreview.warnings].join('；'))
     } catch (previewError) {
-      if (previewError instanceof ApiError && previewError.code === 'VALUATION_VERSION_CONFLICT') {
+      if (previewError instanceof ApiError && ['VALUATION_VERSION_CONFLICT', 'TRANSACTION_VERSION_CONFLICT'].includes(previewError.code ?? '')) {
         await loadValuation()
         clearCandidate()
-        setError('雲端估值版本已更新，候選資料已清除。請重新選擇估值檔。')
+        setError('雲端交易或估值版本已更新，候選資料已清除。請重新選擇估值檔。')
       } else {
         setError(previewError instanceof Error ? previewError.message : String(previewError))
       }
@@ -107,10 +105,12 @@ export default function ValuationWorkspace() {
   }
 
   async function activateValuation() {
-    if (!bootstrap || !parseResult || !pendingFile || !preview?.activationAllowed) return
+    if (!bootstrap || !bootstrap.currentTransactionDatasetId || !parseResult || !pendingFile || !preview?.activationAllowed) return
     setBusy(true); setError(''); setMessage('')
     const payload: ValuationSnapshotUpload = {
       baseRevision: bootstrap.valuationRevision,
+      transactionDatasetId: bootstrap.currentTransactionDatasetId,
+      transactionRevision: bootstrap.currentTransactionRevision,
       valuationDate: parseResult.valuationDate,
       filename: pendingFile.name,
       fileHash: parseResult.fileHash,
@@ -123,12 +123,12 @@ export default function ValuationWorkspace() {
       const updated = await api.valuationActivate(payload)
       setBootstrap(updated)
       clearCandidate()
-      setMessage(`已啟用估值版本 v${updated.valuationRevision}，估值日為 ${updated.activeSnapshot?.valuationDate ?? '—'}。`)
+      setMessage(`已啟用估值版本 v${updated.valuationRevision}，綁定交易 v${updated.activeSnapshot?.transactionRevision ?? '—'}，估值日為 ${updated.activeSnapshot?.valuationDate ?? '—'}。`)
     } catch (activateError) {
-      if (activateError instanceof ApiError && activateError.code === 'VALUATION_VERSION_CONFLICT') {
+      if (activateError instanceof ApiError && ['VALUATION_VERSION_CONFLICT', 'TRANSACTION_VERSION_CONFLICT'].includes(activateError.code ?? '')) {
         await loadValuation()
         clearCandidate()
-        setError('其他瀏覽器已更新估值資料。系統已載入最新版，請重新選擇檔案。')
+        setError('其他瀏覽器已更新交易或估值資料。系統已載入最新版，請重新選擇檔案。')
       } else {
         setError(activateError instanceof Error ? activateError.message : String(activateError))
       }
@@ -141,8 +141,8 @@ export default function ValuationWorkspace() {
   const valuation = bootstrap?.valuation ?? null
   const candidate = preview?.valuation ?? null
   const fxCost = useMemo(
-    () => buildFxCostPool(portfolioBootstrap?.transactions ?? []),
-    [portfolioBootstrap],
+    () => buildFxCostPool(bootstrap?.transactions ?? []),
+    [bootstrap],
   )
   const reconciliation = useMemo(
     () => valuation ? reconcileValuationWithTwdCost(valuation, fxCost) : null,
@@ -168,13 +168,19 @@ export default function ValuationWorkspace() {
         </div></div>
 
         {(message || error) && <div className={`banner ${error ? 'error' : ''}`}>{error || message}</div>}
+        {bootstrap?.freshness === 'STALE' && (
+          <div className="banner error">
+            此估值綁定交易 v{active?.transactionRevision ?? '—'}，目前交易已是 v{bootstrap.currentTransactionRevision}。數字仍以原交易版本重現，請重新啟用估值後再作投資決策。
+          </div>
+        )}
 
         {!bootstrap ? <div className="empty-state">正在載入估值資料…</div> : (
           <>
             <div className="metrics-grid">
               <Metric label="估值版本" value={`v${bootstrap.valuationRevision}`} hint={active ? formatDateTime(active.activatedAt) : '尚未建立'} />
+              <Metric label="交易血緣" value={active ? `v${active.transactionRevision}` : '—'} hint={active?.transactionDatasetId ?? '尚未綁定'} />
               <Metric label="估值日" value={active?.valuationDate ?? '—'} hint={active?.filename ?? '尚未上傳'} />
-              <Metric label="估值狀態" value={valuation ? (valuation.complete ? '完整' : '不完整') : '尚未估值'} hint={valuation && !valuation.complete ? `${valuation.blockingIssueCount} 項阻擋問題` : undefined} />
+              <Metric label="估值狀態" value={bootstrap.freshness === 'STALE' ? 'STALE' : valuation ? (valuation.complete ? 'CURRENT' : '不完整') : '尚未估值'} hint={bootstrap.freshness === 'STALE' ? `目前交易為 v${bootstrap.currentTransactionRevision}` : valuation && !valuation.complete ? `${valuation.blockingIssueCount} 項阻擋問題` : undefined} />
               <Metric label="TWD 總資產" value={valuation?.totalAssetsTwd === null || valuation?.totalAssetsTwd === undefined ? '—' : formatAmount(valuation.totalAssetsTwd)} hint="市值 Snapshot，不是投資報酬" />
             </div>
 
@@ -273,7 +279,7 @@ export default function ValuationWorkspace() {
             ref={fileInputRef}
             type="file"
             accept=".xlsx,.xls,.csv"
-            disabled={busy || !bootstrap}
+            disabled={busy || !bootstrap?.currentTransactionDatasetId}
             onClick={(event) => { event.currentTarget.value = '' }}
             onChange={(event) => {
               const file = event.currentTarget.files?.[0] ?? null
@@ -298,7 +304,7 @@ export default function ValuationWorkspace() {
               <div className={`diff-card ${preview.activationAllowed ? 'positive' : 'negative'}`}><span>候選總資產</span><strong>{candidate?.totalAssetsTwd === null || candidate?.totalAssetsTwd === undefined ? '不完整' : formatAmount(candidate.totalAssetsTwd)}</strong></div>
               <div className="preview-actions">
                 <button className="secondary" onClick={clearCandidate} disabled={busy}>取消</button>
-                <button className="primary" onClick={() => void activateValuation()} disabled={busy || preview.diff.unchanged || !preview.activationAllowed}>確認啟用估值</button>
+                <button className="primary" onClick={() => void activateValuation()} disabled={busy || (preview.diff.unchanged && bootstrap?.freshness !== 'STALE') || !preview.activationAllowed}>確認啟用估值</button>
               </div>
             </div>
 
