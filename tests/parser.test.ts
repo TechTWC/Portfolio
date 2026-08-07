@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import * as XLSX from 'xlsx'
 import { parseTransactionFile, parseTransactionRows } from '../src/lib/parser'
 import {
@@ -7,6 +7,8 @@ import {
   MAX_SPREADSHEET_ROWS,
   MAX_SPREADSHEET_ROWS_TO_READ,
 } from '../src/lib/spreadsheet-safety'
+
+const originalTimeZone = process.env.TZ
 
 function workbookFile(bookType: 'xlsx' | 'xls', rows: unknown[][]): File {
   const workbook = XLSX.utils.book_new()
@@ -21,6 +23,10 @@ function csvFile(name: string, rows: unknown[][]): File {
     .join('\n')
   return new File([contents], name, { type: 'text/csv' })
 }
+
+afterEach(() => {
+  process.env.TZ = originalTimeZone
+})
 
 describe('transaction parser', () => {
   it('converts a positive SELL quantity to a negative security quantity', async () => {
@@ -79,6 +85,30 @@ describe('transaction parser', () => {
       quantity: 2,
       amountForeign: 200,
     })
+  })
+
+  it('preserves a Taiwan-local calendar Date without shifting to the previous UTC day', async () => {
+    process.env.TZ = 'Asia/Taipei'
+    const calendarDate = new Date(2026, 0, 2)
+    expect(calendarDate.toISOString().slice(0, 10)).toBe('2026-01-01')
+
+    const result = await parseTransactionRows([
+      { 日期: calendarDate, 交易類型: 'BUY', 股票代號: '2330', 購買股數: 1, 購買股價: 100, 幣別: 'TWD' },
+    ])
+
+    expect(result.transactions[0].tradeDate).toBe('2026-01-02')
+  })
+
+  it('preserves an ISO calendar date parsed from CSV in the Taiwan timezone', async () => {
+    process.env.TZ = 'Asia/Taipei'
+    const file = csvFile('transactions.csv', [
+      ['trade_date', 'type', 'stock_id', 'qty', 'trade_price', 'ccy'],
+      ['2026-01-02', 'BUY', '2330', 1, 100, 'TWD'],
+    ])
+
+    const result = await parseTransactionFile(file)
+
+    expect(result.transactions[0].tradeDate).toBe('2026-01-02')
   })
 
   it.each(['xlsx', 'xls'] as const)('reports a corrupted %s file as a file-format error', async (bookType) => {
