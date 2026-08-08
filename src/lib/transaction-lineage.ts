@@ -44,6 +44,14 @@ function semanticKey(row: NormalizedTransaction): string {
   ].join('\u0000')
 }
 
+function lineageIdentityKey(row: NormalizedTransaction): string {
+  return [
+    row.transactionType,
+    row.ticker.toUpperCase(),
+    row.currency.toUpperCase(),
+  ].join('\u0000')
+}
+
 export function planTransactionLineage(
   previous: StoredTransaction[],
   incoming: NormalizedTransaction[],
@@ -69,8 +77,8 @@ export function planTransactionLineage(
 
   const matchUniqueGroups = (
     keyFor: (row: NormalizedTransaction) => string,
-    ambiguousKeys?: Set<string>,
-    skipIncoming?: (row: NormalizedTransaction) => boolean,
+    ambiguousIncomingIndexes?: Set<number>,
+    skipIncoming?: (row: NormalizedTransaction, index: number) => boolean,
   ) => {
     const remainingPrevious = previous
       .map((row, index) => ({ row, index }))
@@ -78,7 +86,7 @@ export function planTransactionLineage(
     const remainingIncoming = incoming
       .map((row, index) => ({ row, index }))
       .filter(({ row, index }) => (
-        planned[index].transactionId === null && !skipIncoming?.(row)
+        planned[index].transactionId === null && !skipIncoming?.(row, index)
       ))
     const previousGroups = groupIndexes(remainingPrevious, ({ row }) => keyFor(row))
     const incomingGroups = groupIndexes(remainingIncoming, ({ row }) => keyFor(row))
@@ -87,7 +95,9 @@ export function planTransactionLineage(
       const previousGroupIndexes = previousGroups.get(key) ?? []
       if (previousGroupIndexes.length === 0) continue
       if (previousGroupIndexes.length !== 1 || incomingGroupIndexes.length !== 1) {
-        ambiguousKeys?.add(key)
+        for (const groupIndex of incomingGroupIndexes) {
+          ambiguousIncomingIndexes?.add(remainingIncoming[groupIndex].index)
+        }
         continue
       }
 
@@ -106,8 +116,30 @@ export function planTransactionLineage(
   // Prefer the unique semantic predecessor before considering source rows.
   // A deleted row can make a different transaction occupy its old row number,
   // so source position must never override a unique calendar/identity match.
-  const ambiguousKeys = new Set<string>()
-  matchUniqueGroups(semanticKey, ambiguousKeys)
+  const ambiguousIncomingIndexes = new Set<number>()
+  matchUniqueGroups(semanticKey, ambiguousIncomingIndexes)
+
+  // A changed date removes the semantic-key evidence. Before using source row
+  // as a fallback, require the remaining identity candidates on both sides to
+  // be one-to-one. Otherwise a deleted repeated trade can make its old row
+  // point at a different survivor, and the row number would guess the lineage.
+  const remainingPrevious = previous
+    .map((row, index) => ({ row, index }))
+    .filter(({ index }) => !usedPrevious.has(index))
+  const remainingIncoming = incoming
+    .map((row, index) => ({ row, index }))
+    .filter(({ index }) => planned[index].transactionId === null)
+  const previousIdentityGroups = groupIndexes(remainingPrevious, ({ row }) => lineageIdentityKey(row))
+  const incomingIdentityGroups = groupIndexes(remainingIncoming, ({ row }) => lineageIdentityKey(row))
+
+  for (const [key, incomingGroupIndexes] of incomingIdentityGroups) {
+    const previousGroupIndexes = previousIdentityGroups.get(key) ?? []
+    if (previousGroupIndexes.length === 0) continue
+    if (previousGroupIndexes.length === 1 && incomingGroupIndexes.length === 1) continue
+    for (const groupIndex of incomingGroupIndexes) {
+      ambiguousIncomingIndexes.add(remainingIncoming[groupIndex].index)
+    }
+  }
 
   // Source row plus the same security/cash identity remains a safe fallback
   // for a one-to-one correction whose date itself changed. Repeated candidates
@@ -116,7 +148,7 @@ export function planTransactionLineage(
   matchUniqueGroups(
     correctionKey,
     undefined,
-    (row) => ambiguousKeys.has(semanticKey(row)),
+    (_row, index) => ambiguousIncomingIndexes.has(index),
   )
 
   const summary: TransactionLineageSummary = {
@@ -124,8 +156,8 @@ export function planTransactionLineage(
     corrected: planned.filter((row) => row.kind === 'CORRECTED').length,
     added: planned.filter((row) => row.kind === 'NEW').length,
     removed: previous.length - usedPrevious.size,
-    ambiguous: planned.filter((row) => (
-      row.kind === 'NEW' && ambiguousKeys.has(semanticKey(row.transaction))
+    ambiguous: planned.filter((row, index) => (
+      row.kind === 'NEW' && ambiguousIncomingIndexes.has(index)
     )).length,
   }
 

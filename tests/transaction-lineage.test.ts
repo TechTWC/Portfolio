@@ -133,6 +133,23 @@ describe('transaction lineage planning', () => {
     expect(result.summary).toEqual({ unchanged: 0, corrected: 0, added: 1, removed: 2, ambiguous: 1 })
   })
 
+  it('does not reuse a deleted row ID when the ambiguous survivor also changes date', () => {
+    const removed = row('txn-1', 'a', { sourceRowNumber: 2 })
+    const survivor = row('txn-2', 'b', { sourceRowNumber: 3 })
+    const correctedSurvivor = incoming(survivor, {
+      sourceRowNumber: 2,
+      tradeDate: '2026-01-03',
+      quantity: 15,
+      amountForeign: 1_500,
+      rowHash: 'c'.repeat(64),
+    })
+
+    const result = planTransactionLineage([removed, survivor], [correctedSurvivor])
+
+    expect(result.rows[0]).toMatchObject({ transactionId: null, kind: 'NEW' })
+    expect(result.summary).toEqual({ unchanged: 0, corrected: 0, added: 1, removed: 2, ambiguous: 1 })
+  })
+
   it('reports genuine additions and removals without linking them', () => {
     const removed = row('txn-1', 'a')
     const added = incoming(row('unused', 'b', { ticker: 'AAPL', currency: 'USD' }))
