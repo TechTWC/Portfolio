@@ -168,7 +168,12 @@ export function planTransactionLineage(
   for (const [key, incomingGroupIndexes] of preSemanticIncomingIdentityGroups) {
     const previousGroupIndexes = preSemanticPreviousIdentityGroups.get(key) ?? []
     if (previousGroupIndexes.length === 0) continue
-    if (previousGroupIndexes.length === 1 && incomingGroupIndexes.length === 1) continue
+    // Equal-sized identity groups may still contain one-to-one semantic keys,
+    // such as two distinct trade dates that were both repriced. Let the
+    // semantic pass prove those matches before treating the remainder as
+    // ambiguous. A count mismatch still means a deletion/addition can make a
+    // mutable date or source row point at the wrong predecessor.
+    if (previousGroupIndexes.length === incomingGroupIndexes.length) continue
     for (const groupIndex of incomingGroupIndexes) {
       ambiguousIncomingIndexes.add(preSemanticIncoming[groupIndex].index)
     }
