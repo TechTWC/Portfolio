@@ -19,6 +19,7 @@ concurrency:
 jobs:
   deploy:
     name: Verify owner-only Access, migrate and deploy
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production

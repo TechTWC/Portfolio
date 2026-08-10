@@ -92,6 +92,17 @@ describe('Personal Production deployment gate', () => {
     expect(productionWorkflow).toContain('Requested commit is not the current main HEAD')
   })
 
+  it('refuses to enter the Production job from a stale branch or tag workflow ref', () => {
+    const deployJobHeader = productionWorkflow.slice(
+      productionWorkflow.indexOf('  deploy:'),
+      productionWorkflow.indexOf('    steps:'),
+    )
+    expect(deployJobHeader).toContain("if: github.ref == 'refs/heads/main'")
+    expect(deployJobHeader.indexOf("if: github.ref == 'refs/heads/main'"))
+      .toBeLessThan(deployJobHeader.indexOf('environment: production'))
+    expect(deployJobHeader).not.toContain('refs/tags/')
+  })
+
   it('verifies owner-only Access before creating or migrating production D1', () => {
     const accessGate = productionWorkflow.indexOf('node scripts/verify-personal-access.mjs')
     const d1Resolution = productionWorkflow.indexOf('node scripts/resolve-d1.mjs')
@@ -203,12 +214,12 @@ describe('Personal Production Access enforcement probe', () => {
     expect(() => assertAccessEnforced(new Response(null, { status: 401 }), options)).toThrow(/does not prove/)
   })
 
-  it('accepts a 403 only with Cloudflare edge markers', () => {
-    const valid = new Response(null, {
+  it('rejects a generic Cloudflare 403 because edge markers do not prove Access', () => {
+    const genericEdgeRejection = new Response(null, {
       status: 403,
       headers: { server: 'cloudflare', 'cf-ray': '7109408e6b84efe4-EWR' },
     })
-    expect(assertAccessEnforced(valid, options)).toMatch(/rejection/)
+    expect(() => assertAccessEnforced(genericEdgeRejection, options)).toThrow(/does not prove/)
     expect(() => assertAccessEnforced(new Response(null, { status: 403 }), options)).toThrow(/does not prove/)
   })
 

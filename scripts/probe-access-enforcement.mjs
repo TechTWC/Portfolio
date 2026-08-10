@@ -29,21 +29,12 @@ function oauthChallenge(response, deploymentUrl) {
     && metadataUrl.pathname === '/.well-known/cloudflare-access-protected-resource/'
 }
 
-function cloudflareForbidden(response) {
-  if (response.status !== 403) return false
-  const server = response.headers.get('server') || ''
-  const ray = response.headers.get('cf-ray') || ''
-  return server.toLowerCase() === 'cloudflare'
-    && /^[0-9a-f]{8,32}-[a-z0-9]{3,10}$/i.test(ray)
-}
-
 export function assertAccessEnforced(response, { deploymentUrl, teamDomain }) {
   const deployment = requiredUrl(deploymentUrl, 'DEPLOYMENT_URL')
   const team = requiredUrl(teamDomain, 'CLOUDFLARE_ACCESS_TEAM_DOMAIN')
 
   if (accessRedirect(response, team)) return `Access login redirect (${response.status})`
   if (oauthChallenge(response, deployment)) return 'Access OAuth challenge (401)'
-  if (cloudflareForbidden(response)) return 'Cloudflare Access rejection (403)'
 
   throw new Error(`Response does not prove Cloudflare Access enforcement (HTTP ${response.status}).`)
 }
