@@ -108,3 +108,40 @@ Draft PR code
 ```
 
 財務算法變更仍必須經過 Draft PR、golden tests 與人工確認，不得直接自動合併。
+
+## 7. Personal Production
+
+正式個人環境使用 GitHub environment：
+
+```text
+production
+```
+
+必要 secrets：
+
+```text
+CLOUDFLARE_API_TOKEN
+CLOUDFLARE_ACCOUNT_ID
+CLOUDFLARE_PERSONAL_EMAIL
+```
+
+`CLOUDFLARE_PERSONAL_EMAIL` 只保存在 GitHub environment secret，不得寫入 Repository、
+Workflow Log 或部署摘要。
+
+正式資源與 Staging 完全分離：
+
+```text
+Worker: portfolio-analyzer
+D1: portfolio-analyzer-production
+URL: https://portfolio-analyzer.techtwc.workers.dev
+```
+
+`Deploy Personal Production` 只允許手動觸發，且輸入必須是當下 `main` 的完整
+40 字元 Commit SHA。部署在建立 D1 或套用 Migration 前會先確認：
+
+1. 正式 hostname 恰好對應一個 Cloudflare Access Application。
+2. Application 恰好只有一個 Policy。
+3. Policy 是 `Allow`，而且唯一 Include Rule 是設定於 Secret 的本人 Email。
+4. 不接受 Everyone、Email Domain、Group、第二個 Email、Bypass 或額外 Require／Exclude Rule。
+
+任何條件不符都必須停止部署，不得以 Staging D1 或 `AUTH_MODE=dev` 代替。
