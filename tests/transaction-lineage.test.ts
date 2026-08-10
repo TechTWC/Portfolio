@@ -148,6 +148,38 @@ describe('transaction lineage planning', () => {
     expect(result.summary).toEqual({ unchanged: 0, corrected: 2, added: 0, removed: 0, ambiguous: 0 })
   })
 
+  it('does not reuse a deleted ID when delete and add keep identity-group counts equal', () => {
+    const removed = row('txn-1', 'a', {
+      sourceRowNumber: 2,
+      tradeDate: '2026-01-01',
+    })
+    const survivor = row('txn-2', 'b', {
+      sourceRowNumber: 3,
+      tradeDate: '2026-01-02',
+    })
+    const correctedSurvivor = incoming(survivor, {
+      sourceRowNumber: 2,
+      tradeDate: '2026-01-01',
+      price: 105,
+      amountForeign: 1_050,
+      rowHash: 'c'.repeat(64),
+    })
+    const added = incoming(row('unused', 'd', {
+      sourceRowNumber: 4,
+      tradeDate: '2026-01-03',
+      price: 110,
+      amountForeign: 1_100,
+    }))
+
+    const result = planTransactionLineage([removed, survivor], [correctedSurvivor, added])
+
+    expect(result.rows).toMatchObject([
+      { transactionId: null, kind: 'NEW' },
+      { transactionId: null, kind: 'NEW' },
+    ])
+    expect(result.summary).toEqual({ unchanged: 0, corrected: 0, added: 2, removed: 2, ambiguous: 2 })
+  })
+
   it('keeps exact hash lineage when another same-identity trade was removed', () => {
     const removed = row('txn-1', 'a', {
       sourceRowNumber: 2,
