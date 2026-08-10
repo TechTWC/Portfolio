@@ -169,6 +169,29 @@ export function planTransactionLineage(
     const previousGroupIndexes = preSemanticPreviousIdentityGroups.get(key) ?? []
     if (previousGroupIndexes.length === 0) continue
     if (previousGroupIndexes.length === 1 && incomingGroupIndexes.length === 1) continue
+
+    // Multiple rows are safe to match semantically only when the complete
+    // semantic-key multiset is unchanged. Equal row counts alone are not
+    // evidence: deleting one trade, changing a survivor to the deleted date,
+    // and adding another trade can keep the count equal while reusing the
+    // deleted transaction ID. Exact matching multisets still permit repricing
+    // several distinct-date trades without discarding their stable IDs.
+    const previousSemanticGroups = groupIndexes(
+      previousGroupIndexes.map((groupIndex) => preSemanticPrevious[groupIndex]),
+      ({ row }) => semanticKey(row),
+    )
+    const incomingSemanticGroups = groupIndexes(
+      incomingGroupIndexes.map((groupIndex) => preSemanticIncoming[groupIndex]),
+      ({ row }) => semanticKey(row),
+    )
+    const sameSemanticMultiset = (
+      previousGroupIndexes.length === incomingGroupIndexes.length
+      && previousSemanticGroups.size === incomingSemanticGroups.size
+      && [...previousSemanticGroups].every(([semantic, indexes]) => (
+        incomingSemanticGroups.get(semantic)?.length === indexes.length
+      ))
+    )
+    if (sameSemanticMultiset) continue
     for (const groupIndex of incomingGroupIndexes) {
       ambiguousIncomingIndexes.add(preSemanticIncoming[groupIndex].index)
     }
