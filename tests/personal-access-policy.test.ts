@@ -1,9 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { assertPersonalPolicy, verifyPersonalAccess } from '../scripts/verify-personal-access.mjs'
+import { assertAccessEnforced } from '../scripts/probe-access-enforcement.mjs'
 
 const personalEmail = 'owner@example.com'
 const productionWorkflow = readFileSync('.github/workflows/deploy-personal-production.yml', 'utf8')
+
+function workflowStep(name: string) {
+  const marker = `      - name: ${name}\n`
+  const start = productionWorkflow.indexOf(marker)
+  if (start < 0) throw new Error(`Workflow step not found: ${name}`)
+  const end = productionWorkflow.indexOf('\n      - ', start + marker.length)
+  return productionWorkflow.slice(start, end < 0 ? undefined : end)
+}
 
 function response(result: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify({ success: status === 200, result }), {
@@ -98,5 +107,116 @@ describe('Personal Production deployment gate', () => {
     expect(productionWorkflow).not.toContain('portfolio-analyzer-staging')
     expect(productionWorkflow).not.toContain('echo "$CLOUDFLARE_PERSONAL_EMAIL"')
     expect(productionWorkflow).not.toContain('echo "${CLOUDFLARE_PERSONAL_EMAIL}"')
+  })
+
+  it('does not expose Production secrets to checkout, install, validation or build', () => {
+    const jobScope = productionWorkflow.slice(
+      productionWorkflow.indexOf('    environment: production'),
+      productionWorkflow.indexOf('    steps:'),
+    )
+    expect(jobScope).not.toContain('${{ secrets.')
+
+    for (const stepName of ['Install locked dependencies', 'Validate application']) {
+      const step = workflowStep(stepName)
+      expect(step).not.toMatch(/CLOUDFLARE_(API_TOKEN|ACCOUNT_ID|PERSONAL_EMAIL)/)
+      expect(step).not.toContain('${{ secrets.')
+    }
+
+    const setupSection = productionWorkflow.slice(
+      productionWorkflow.indexOf('      - uses: actions/checkout@v4'),
+      productionWorkflow.indexOf('      - name: Check protected personal Email input'),
+    )
+    expect(setupSection).not.toContain('${{ secrets.')
+  })
+
+  it('limits the personal Email secret to input and Access-policy checks', () => {
+    const emailBindings = productionWorkflow.match(/CLOUDFLARE_PERSONAL_EMAIL: \$\{\{ secrets\.CLOUDFLARE_PERSONAL_EMAIL \}\}/g)
+    expect(emailBindings).toHaveLength(3)
+    for (const stepName of [
+      'Check protected personal Email input',
+      'Verify one-person Cloudflare Access policy',
+      'Re-verify one-person Access after deployment',
+    ]) {
+      expect(workflowStep(stepName)).toContain('CLOUDFLARE_PERSONAL_EMAIL: ${{ secrets.CLOUDFLARE_PERSONAL_EMAIL }}')
+    }
+  })
+
+  it('limits Cloudflare credentials to API, D1, migration and deploy steps', () => {
+    const credentialSteps = [
+      'Verify one-person Cloudflare Access policy',
+      'Resolve or create production D1',
+      'Resolve Cloudflare Access audience',
+      'Apply D1 migrations',
+      'Deploy Personal Production Worker',
+      'Re-verify one-person Access after deployment',
+    ]
+    expect(productionWorkflow.match(/CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/g))
+      .toHaveLength(credentialSteps.length)
+    expect(productionWorkflow.match(/CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.CLOUDFLARE_ACCOUNT_ID \}\}/g))
+      .toHaveLength(credentialSteps.length)
+    for (const stepName of credentialSteps) {
+      const step = workflowStep(stepName)
+      expect(step).toContain('CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}')
+      expect(step).toContain('CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}')
+    }
+    expect(workflowStep('Check protected personal Email input')).not.toMatch(/CLOUDFLARE_(API_TOKEN|ACCOUNT_ID)/)
+  })
+
+  it('reports Access enforcement without claiming an authenticated Worker health check', () => {
+    expect(workflowStep('Verify unauthenticated requests are blocked by Access'))
+      .toContain('node scripts/probe-access-enforcement.mjs')
+    expect(productionWorkflow).not.toContain('node scripts/smoke-test.mjs')
+    expect(productionWorkflow).not.toContain('Health check: passed')
+    expect(productionWorkflow).toContain('Access enforcement probe: passed')
+    expect(productionWorkflow).toContain('Authenticated Worker health check: pending manual acceptance')
+  })
+})
+
+describe('Personal Production Access enforcement probe', () => {
+  const options = {
+    deploymentUrl: 'https://portfolio-analyzer.techtwc.workers.dev',
+    teamDomain: 'https://techtwc.cloudflareaccess.com',
+  }
+
+  it('accepts only a login redirect on the configured Access team domain', () => {
+    const valid = new Response(null, {
+      status: 302,
+      headers: { location: 'https://techtwc.cloudflareaccess.com/cdn-cgi/access/login/portfolio-analyzer' },
+    })
+    expect(assertAccessEnforced(valid, options)).toMatch(/redirect/)
+
+    const external = new Response(null, {
+      status: 302,
+      headers: { location: 'https://attacker.example/cdn-cgi/access/login/portfolio-analyzer' },
+    })
+    expect(() => assertAccessEnforced(external, options)).toThrow(/does not prove/)
+  })
+
+  it('accepts a 401 only with Access OAuth metadata for the protected deployment', () => {
+    const valid = new Response(null, {
+      status: 401,
+      headers: {
+        'www-authenticate': 'Bearer realm="OAuth", resource_metadata="https://portfolio-analyzer.techtwc.workers.dev/.well-known/cloudflare-access-protected-resource/"',
+      },
+    })
+    expect(assertAccessEnforced(valid, options)).toMatch(/OAuth challenge/)
+    expect(() => assertAccessEnforced(new Response(null, { status: 401 }), options)).toThrow(/does not prove/)
+  })
+
+  it('accepts a 403 only with Cloudflare edge markers', () => {
+    const valid = new Response(null, {
+      status: 403,
+      headers: { server: 'cloudflare', 'cf-ray': '7109408e6b84efe4-EWR' },
+    })
+    expect(assertAccessEnforced(valid, options)).toMatch(/rejection/)
+    expect(() => assertAccessEnforced(new Response(null, { status: 403 }), options)).toThrow(/does not prove/)
+  })
+
+  it('rejects an origin health response because it does not prove Access protection', () => {
+    const health = new Response(JSON.stringify({ ok: true, service: 'portfolio-analyzer-cloud' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+    expect(() => assertAccessEnforced(health, options)).toThrow(/does not prove/)
   })
 })

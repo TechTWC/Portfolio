@@ -145,3 +145,11 @@ URL: https://portfolio-analyzer.techtwc.workers.dev
 4. 不接受 Everyone、Email Domain、Group、第二個 Email、Bypass 或額外 Require／Exclude Rule。
 
 任何條件不符都必須停止部署，不得以 Staging D1 或 `AUTH_MODE=dev` 代替。
+
+部署後的自動檢查只確認未登入請求會被 Cloudflare Access 以登入轉址、具正式
+OAuth metadata 的 401，或具 Cloudflare edge 標記的 403 阻擋。這項檢查不能代表
+Worker `/api/health` 已實際執行成功，也不得在摘要中宣稱健康檢查通過。
+
+正式人工驗收時，本人需先完成 Access 登入，再開啟 `/api/health`，確認回傳
+`ok: true` 與 `service: portfolio-analyzer-cloud`；Production Service Token 未經另行
+安全設計與授權不得加入。
