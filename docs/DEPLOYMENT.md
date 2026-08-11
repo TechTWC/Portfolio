@@ -108,3 +108,52 @@ Draft PR code
 ```
 
 財務算法變更仍必須經過 Draft PR、golden tests 與人工確認，不得直接自動合併。
+
+## 7. Personal Production
+
+正式個人環境使用 GitHub environment：
+
+```text
+production
+```
+
+必要 secrets：
+
+```text
+CLOUDFLARE_API_TOKEN
+CLOUDFLARE_ACCOUNT_ID
+CLOUDFLARE_PERSONAL_EMAIL
+```
+
+`CLOUDFLARE_PERSONAL_EMAIL` 只保存在 GitHub environment secret，不得寫入 Repository、
+Workflow Log 或部署摘要。
+
+正式資源與 Staging 完全分離：
+
+```text
+Worker: portfolio-analyzer
+D1: portfolio-analyzer-production
+URL: https://portfolio-analyzer.techtwc.workers.dev
+```
+
+`Deploy Personal Production` 只允許從 `refs/heads/main` 手動觸發，且輸入必須是
+當下 `main` 的完整 40 字元 Commit SHA。從其他分支或 Tag 啟動時，Production job
+會直接跳過，不得讀取 Production environment 或執行部署。部署在建立 D1 或套用
+Migration 前會先確認：
+
+1. 正式 hostname 恰好對應一個 Cloudflare Access Application。
+2. Application 恰好只有一個 Policy。
+3. Policy 是 `Allow`，而且唯一 Include Rule 是設定於 Secret 的本人 Email。
+4. 不接受 Everyone、Email Domain、Group、第二個 Email、Bypass 或額外 Require／Exclude Rule。
+
+任何條件不符都必須停止部署，不得以 Staging D1 或 `AUTH_MODE=dev` 代替。
+
+部署後的自動檢查只接受 Cloudflare Access 登入轉址，或具正式 OAuth metadata 的
+401。一般 Worker、WAF 與 Cloudflare Access 都可能回傳含 `Server: cloudflare` 與
+`CF-Ray` 的 403，因此任何 403 都不能單獨證明 Access 已執行，必須讓自動檢查失敗。
+這項檢查不能代表 Worker `/api/health` 已實際執行成功，也不得在摘要中宣稱健康
+檢查通過。
+
+正式人工驗收時，本人需先完成 Access 登入，再開啟 `/api/health`，確認回傳
+`ok: true` 與 `service: portfolio-analyzer-cloud`；Production Service Token 未經另行
+安全設計與授權不得加入。
