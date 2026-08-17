@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError, api } from './lib/api'
 import { buildFxCostPool } from './lib/fx-cost-pool'
+import type { MarketDataBootstrapResponse } from './lib/market-data-contracts'
 import type {
   ValuationBootstrapResponse,
   ValuationPreviewResponse,
@@ -40,6 +41,7 @@ function positionKey(ticker: string, currency: string): string {
 
 export default function ValuationWorkspace() {
   const [bootstrap, setBootstrap] = useState<ValuationBootstrapResponse | null>(null)
+  const [marketData, setMarketData] = useState<MarketDataBootstrapResponse | null>(null)
   const [parseResult, setParseResult] = useState<ValuationParseResult | null>(null)
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<ValuationPreviewResponse | null>(null)
@@ -58,13 +60,50 @@ export default function ValuationWorkspace() {
   async function loadValuation() {
     setError('')
     try {
-      setBootstrap(await api.valuationBootstrap())
+      const [valuation, market] = await Promise.all([
+        api.valuationBootstrap(),
+        api.marketDataBootstrap(false),
+      ])
+      setBootstrap(valuation)
+      setMarketData(market)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError))
     }
   }
 
   useEffect(() => { void loadValuation() }, [])
+
+  async function refreshAutomaticMarketData() {
+    if (!bootstrap?.currentTransactionDatasetId) return
+    setBusy(true); setError(''); setMessage(''); clearCandidate()
+    try {
+      const updated = await api.marketDataRefresh({
+        baseValuationRevision: bootstrap.valuationRevision,
+        transactionDatasetId: bootstrap.currentTransactionDatasetId,
+        transactionRevision: bootstrap.currentTransactionRevision,
+      })
+      setBootstrap(updated.valuation)
+      setMarketData(updated.market)
+      setMessage(
+        `行情更新完成：${updated.market.activeRun?.instrumentCount ?? 0} 個標的、`
+        + `${updated.market.activeRun?.barCount.toLocaleString() ?? 0} 筆本次行情；`
+        + `估值已更新至 v${updated.valuation.valuationRevision}。`,
+      )
+    } catch (refreshError) {
+      if (refreshError instanceof ApiError && [
+        'VALUATION_VERSION_CONFLICT',
+        'TRANSACTION_VERSION_CONFLICT',
+        'MARKET_DATA_VERSION_CONFLICT',
+      ].includes(refreshError.code ?? '')) {
+        await loadValuation()
+        setError('其他分頁已更新交易、行情或估值版本。系統已重新載入，請再按一次更新。')
+      } else {
+        setError(refreshError instanceof Error ? refreshError.message : String(refreshError))
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function selectValuationFile(file: File | null) {
     setError(''); setMessage(''); clearCandidate(); setPendingFile(file)
@@ -176,6 +215,52 @@ export default function ValuationWorkspace() {
 
         {!bootstrap ? <div className="empty-state">正在載入估值資料…</div> : (
           <>
+            <div className="market-refresh-card">
+              <div>
+                <span>AUTOMATIC MARKET DATA · v1</span>
+                <h2>一鍵取得最新收盤價</h2>
+                <p>
+                  抓取所有曾持有證券、必要匯率與 SPY 基準的 raw close；完整驗證後才更新估值。
+                  首次會回補歷史日資料，後續只重抓最近區間。這是收盤資料，不是即時報價。
+                </p>
+              </div>
+              <button
+                className="primary"
+                onClick={() => void refreshAutomaticMarketData()}
+                disabled={busy || !bootstrap.currentTransactionDatasetId}
+              >
+                {busy ? '正在取得並驗證行情…' : '更新最新收盤價'}
+              </button>
+            </div>
+
+            {marketData?.activeRun && (
+              <div className="market-data-summary">
+                <span>
+                  行情 v{marketData.marketRevision}｜{marketData.activeRun.provider}｜
+                  {marketData.activeRun.earliestBarDate ?? '—'} → {marketData.activeRun.latestBarDate ?? '—'}｜
+                  綁定交易 v{marketData.activeRun.transactionRevision}｜
+                  {marketData.freshness === 'CURRENT' ? 'CURRENT' : 'STALE'}
+                </span>
+                <div className="table-wrap"><table>
+                  <thead><tr>
+                    <th>用途</th><th>標的／匯率</th><th>幣別</th><th>來源代號</th>
+                    <th>最新日期</th><th className="numeric">最新 raw close</th><th className="numeric">本次筆數</th>
+                  </tr></thead>
+                  <tbody>{marketData.instruments.map((instrument) => (
+                    <tr key={`${instrument.instrumentType}-${instrument.ticker}-${instrument.currency}`}>
+                      <td>{instrument.instrumentType}</td>
+                      <td>{instrument.instrumentType === 'FX' ? `${instrument.currency}/TWD` : instrument.ticker}</td>
+                      <td>{instrument.currency}</td>
+                      <td>{instrument.providerSymbol}</td>
+                      <td>{instrument.latestBarDate}</td>
+                      <td className="numeric">{formatAmount(instrument.latestRawClose)}</td>
+                      <td className="numeric">{instrument.barCount.toLocaleString()}</td>
+                    </tr>
+                  ))}</tbody>
+                </table></div>
+              </div>
+            )}
+
             <div className="metrics-grid">
               <Metric label="估值版本" value={`v${bootstrap.valuationRevision}`} hint={active ? formatDateTime(active.activatedAt) : '尚未建立'} />
               <Metric label="交易血緣" value={active ? `v${active.transactionRevision}` : '—'} hint={active?.transactionDatasetId ?? '尚未綁定'} />

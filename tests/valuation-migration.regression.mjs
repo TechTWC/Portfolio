@@ -169,6 +169,44 @@ try {
       (SELECT count(*) FROM pragma_foreign_key_check);
   `), 'dataset-1|dataset-2|STALE|0')
 
+  execute(`PRAGMA foreign_keys = ON; BEGIN; ${migration('0006_market_data.sql')} COMMIT;`)
+  assert.equal(execute(`
+    PRAGMA foreign_keys = ON;
+    SELECT
+      (SELECT market_revision FROM market_state WHERE user_id = 'user-1') || '|' ||
+      (SELECT count(*) FROM pragma_foreign_key_check);
+  `), '0|0')
+
+  execute(`
+    PRAGMA foreign_keys = ON;
+    INSERT INTO market_data_runs (
+      id, user_id, revision, status, provider, data_version, benchmark_ticker,
+      transaction_dataset_id, transaction_revision, instrument_count, bar_count,
+      earliest_bar_date, latest_bar_date, fetched_at
+    ) VALUES (
+      'market-run-1', 'user-1', 1, 'ACTIVE', 'YAHOO_FINANCE_CHART', 'market-data-v1.0.0', 'SPY',
+      'dataset-2', 7, 1, 1, '2026-08-14', '2026-08-14', '2026-08-17T00:00:00Z'
+    );
+    INSERT INTO market_data_instruments (
+      id, run_id, user_id, instrument_type, ticker, currency, provider_symbol,
+      exchange_timezone, bar_count, earliest_bar_date, latest_bar_date, latest_raw_close,
+      series_hash, bars_json
+    ) VALUES (
+      'market-instrument-1', 'market-run-1', 'user-1', 'BENCHMARK', 'SPY', 'USD', 'SPY',
+      'America/New_York', 1, '2026-08-14', '2026-08-14', 600,
+      'market-series-1', '[{"date":"2026-08-14","rawClose":600,"adjustedClose":598,"rowHash":"market-row-1"}]'
+    );
+    UPDATE market_state SET active_run_id = 'market-run-1', market_revision = 1
+     WHERE user_id = 'user-1';
+  `)
+  assert.equal(execute(`
+    PRAGMA foreign_keys = ON;
+    SELECT
+      (SELECT active_run_id FROM market_state WHERE user_id = 'user-1') || '|' ||
+      (SELECT printf('%.1f', latest_raw_close) FROM market_data_instruments WHERE id = 'market-instrument-1') || '|' ||
+      (SELECT count(*) FROM pragma_foreign_key_check);
+  `), 'market-run-1|600.0|0')
+
   console.log('valuation migration regression: passed')
 } finally {
   rmSync(directory, { force: true, recursive: true })

@@ -11,6 +11,11 @@ import type {
   ValuationPreviewResponse,
   ValuationSnapshotUpload,
 } from './valuation-contracts'
+import type {
+  MarketDataBootstrapResponse,
+  MarketDataRefreshRequest,
+  MarketDataRefreshResponse,
+} from './market-data-contracts'
 
 export class ApiError extends Error {
   constructor(
@@ -107,6 +112,19 @@ export const api = {
     publishAfterCurrentHandler({
       kind: 'VALUATION_ACTIVATED',
       valuationRevision: updated.valuationRevision,
+    })
+    return updated
+  },
+  marketDataBootstrap: (includeMarks = true) =>
+    requestJson<MarketDataBootstrapResponse>(`/api/market-data/bootstrap?includeMarks=${includeMarks ? '1' : '0'}`),
+  marketDataRefresh: async (payload: MarketDataRefreshRequest) => {
+    const updated = await requestJson<MarketDataRefreshResponse>('/api/market-data/refresh', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+    publishAfterCurrentHandler({
+      kind: 'VALUATION_ACTIVATED',
+      valuationRevision: updated.valuation.valuationRevision,
     })
     return updated
   },

@@ -71,6 +71,7 @@
   font-size: 13px;
 }
 
+.historical-chart-nav,
 .historical-chart-growth,
 .historical-chart-drawdown {
   fill: none;
@@ -81,6 +82,14 @@
 
 .historical-chart-growth {
   stroke: #72e4bd;
+}
+
+.historical-chart-nav {
+  stroke: #6f91ff;
+}
+
+.historical-chart-nav-point {
+  fill: #6f91ff;
 }
 
 .historical-chart-growth-point {

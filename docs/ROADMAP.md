@@ -14,7 +14,7 @@
 
 ## Phase 1 — cross-browser vertical slice
 
-狀態：GitHub／CI 已完成；完整上傳、驗證、差異預覽與快取流程正在 Draft PR #2，之後進行 Cloudflare 部署驗收。
+狀態：已完成並進入 owner-only Personal Production v0.9。
 
 驗收條件：
 
@@ -29,7 +29,9 @@
 
 ## Phase 2 — dataset operations
 
-- 交易血緣、估值 Revision 綁定與 STALE 控制（v0.8）
+狀態：核心版本與血緣已完成；管理工具仍待補。
+
+- [x] 交易血緣、估值 Revision 綁定與 STALE 控制（v0.8）
 - 資料版本列表
 - 還原 ARCHIVED 版本
 - 匯出標準化 CSV／JSON
@@ -39,15 +41,21 @@
 
 ## Phase 3 — portfolio analysis web UI
 
-- Python golden dataset
-- TypeScript cash ledger
-- positions and cost basis
-- daily equity curve
-- TWR、XIRR、Modified Dietz
+狀態：帳務、估值、XIRR、歷史 NAV、TWR 與回撤核心已完成；自動行情 v1
+在 `codex/market-data-v1` 開發中，完整策略與現金流資料品質仍待後續。
+
+- [x] Python golden dataset
+- [x] TypeScript cash ledger
+- [x] positions and cost basis
+- [x] Point-in-Time valuation、XIRR、歷史 NAV、TWR、年化 TWR、最大／目前回撤
+- [ ] daily equity curve（引擎與畫面既有；自動日行情接入與正式驗收中）
+- [ ] Modified Dietz
 - fees/tax/FX spread modes
-- portfolio dashboard
+- [x] portfolio dashboard 基礎頁
 
 ## Phase 4 — strategy comparison
+
+狀態：尚未實作。自動行情 v1 先保存 SPY 與日資料，作為此 Phase 的共用底座。
 
 - equal-principal comparison
 - equal-cash-flow-timing comparison
@@ -60,9 +68,11 @@
 
 ## Phase 5 — production hardening
 
+狀態：Access、D1、依賴安全、Production 人工部署 Gate 已完成第一輪；其餘待補。
+
 - audit log
 - scheduled backup/export
-- market-data proxy and cache
+- [ ] market-data proxy and cache（v1 開發中：使用者觸發、append-only series segments；多來源 fallback 與排程未完成）
 - corporate actions
 - data source manifest
 - mobile UX

@@ -7,6 +7,7 @@ import {
 } from './lib/time-weighted-performance'
 import type { ValuationBootstrapResponse } from './lib/valuation-contracts'
 import { toValuationMark } from './lib/valuation-contracts'
+import type { MarketDataBootstrapResponse } from './lib/market-data-contracts'
 
 function formatAmount(value: number | null): string {
   if (value === null) return '—'
@@ -89,17 +90,23 @@ function LineChart({
 
 export default function HistoricalNavWorkspace() {
   const [valuation, setValuation] = useState<ValuationBootstrapResponse | null>(null)
+  const [marketData, setMarketData] = useState<MarketDataBootstrapResponse | null>(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    api.valuationBootstrap()
-      .then(setValuation)
+    Promise.all([api.valuationBootstrap(), api.marketDataBootstrap()])
+      .then(([nextValuation, nextMarketData]) => {
+        setValuation(nextValuation)
+        setMarketData(nextMarketData)
+      })
       .catch((loadError) => setError(loadError instanceof Error ? loadError.message : String(loadError)))
   }, [])
 
   const result = useMemo(() => {
     if (!valuation) return null
-    const marks = valuation.marks.map(toValuationMark)
+    const marks = marketData?.freshness === 'CURRENT' && marketData.marks.length > 0
+      ? marketData.marks.map(toValuationMark)
+      : valuation.marks.map(toValuationMark)
     const activeValuationDate = valuation.activeSnapshot?.valuationDate ?? null
     const dates = deriveHistoricalNavDates(
       marks,
@@ -115,7 +122,7 @@ export default function HistoricalNavWorkspace() {
       valuationSnapshotId: valuation.activeSnapshot?.id ?? null,
       valuationDate: activeValuationDate,
     })
-  }, [valuation])
+  }, [valuation, marketData])
 
   const series = result?.navSeries ?? null
   const performance = result?.performance ?? null
@@ -152,6 +159,7 @@ export default function HistoricalNavWorkspace() {
             交易 v{provenance.transactionRevision}｜估值 v{provenance.valuationRevision}
             ｜估值 Snapshot {provenance.valuationSnapshotId ?? '—'}
             ｜估值日 {provenance.valuationDate ?? '—'}
+            ｜行情 {marketData?.activeRun ? `v${marketData.marketRevision} ${marketData.activeRun.provider}` : '估值檔'}
             ｜計算 {provenance.calculationVersion}
           </div>
 
@@ -169,8 +177,16 @@ export default function HistoricalNavWorkspace() {
             <Metric label="水下期間" value={performance.drawdown.underwaterDays === null ? '—' : `${performance.drawdown.underwaterDays} 天`} hint="自前高至修復；未修復則算到最新點" />
           </div>
 
-          {performance.complete && (
-            <div className="historical-chart-grid">
+          <div className="historical-chart-grid">
+            <LineChart
+              title="投資組合 TWD 權益曲線"
+              points={performance.points}
+              valueFor={(point) => point.totalAssetsTwd}
+              formatValue={formatAmount}
+              className="historical-chart-nav"
+            />
+            {performance.complete && (
+              <>
               <LineChart
                 title="TWR 累積淨值指數"
                 points={performance.points}
@@ -185,8 +201,9 @@ export default function HistoricalNavWorkspace() {
                 formatValue={formatPercent}
                 className="historical-chart-drawdown"
               />
-            </div>
-          )}
+              </>
+            )}
+          </div>
 
           <div className="panel-heading"><div>
             <span>AUDITABLE NAV & RETURN CHAIN</span>
@@ -249,7 +266,9 @@ export default function HistoricalNavWorkspace() {
           )}
 
           <div className="empty-state">
-            本頁使用目前雲端保存的歷史價格與匯率標記。觀察點越密集，回撤日期與修復期越精確；尚未加入日資料前，不宣稱這是每日最大回撤。
+            {marketData?.freshness === 'CURRENT' && marketData.marks.length > 0
+              ? '本頁使用自動行情 v1 保存的每日 raw close 與匯率；SPY 基準已保存供後續策略比較，但尚未納入本頁報酬。'
+              : '本頁使用目前估值 Snapshot 的歷史價格與匯率標記。觀察點越密集，回撤日期與修復期越精確。'}
           </div>
         </>
       )}
