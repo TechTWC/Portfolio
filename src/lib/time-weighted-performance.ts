@@ -15,6 +15,7 @@ export type HistoricalPerformanceIssueCode =
   | 'NON_POSITIVE_TWR_DENOMINATOR'
   | 'INVALID_GROWTH_FACTOR'
   | 'ZERO_TIME_SPAN'
+  | 'UNSUPPORTED_TOTAL_RETURN_COVERAGE'
 
 export type HistoricalPerformanceIssue = {
   code: HistoricalPerformanceIssueCode
@@ -84,7 +85,9 @@ export type HistoricalPerformanceProvenance = HistoricalPerformanceSource & {
   calculationVersion: typeof HISTORICAL_PERFORMANCE_CALCULATION_VERSION
 }
 
-export type HistoricalPerformanceInput = HistoricalNavInput & HistoricalPerformanceSource
+export type HistoricalPerformanceInput = HistoricalNavInput & HistoricalPerformanceSource & {
+  totalReturnCoverage: 'COMPLETE' | 'PRICE_ONLY'
+}
 
 function clean(value: number): number {
   return Math.abs(value) < EPSILON ? 0 : value
@@ -362,6 +365,7 @@ export function buildHistoricalPerformanceSeries(
     valuationRevision,
     valuationSnapshotId,
     valuationDate,
+    totalReturnCoverage,
     ...navInput
   } = input
   const observationDates = requiredObservationDates(navInput.dates, navInput.transactions)
@@ -374,11 +378,37 @@ export function buildHistoricalPerformanceSeries(
     withdrawalTwd: point.withdrawalTwdOnDate,
   }))
 
+  let performance = calculateTimeWeightedPerformance(observations)
+  if (totalReturnCoverage === 'PRICE_ONLY') {
+    const coverageIssue: HistoricalPerformanceIssue = {
+      code: 'UNSUPPORTED_TOTAL_RETURN_COVERAGE',
+      message: '目前尚未納入股息、股票／ETF 分割及其他公司行動；市值曲線可供檢視，但不能宣稱為完整 TWR 或回撤',
+      dates: observationDates,
+    }
+    performance = {
+      ...performance,
+      complete: false,
+      cumulativeTwr: null,
+      annualizedTwr: null,
+      points: performance.points.map((point) => ({
+        ...point,
+        periodReturn: null,
+        growthIndex: null,
+        cumulativeTwr: null,
+        runningPeakIndex: null,
+        drawdown: null,
+      })),
+      drawdown: emptyDrawdown(),
+      issues: [...performance.issues, coverageIssue],
+      blockingIssueCount: performance.blockingIssueCount + 1,
+    }
+  }
+
   return {
     requestedDates: [...navInput.dates],
     observationDates,
     navSeries,
-    performance: calculateTimeWeightedPerformance(observations),
+    performance,
     provenance: {
       transactionRevision,
       valuationRevision,

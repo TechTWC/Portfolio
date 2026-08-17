@@ -32,6 +32,18 @@ CREATE TABLE IF NOT EXISTS market_state (
   FOREIGN KEY (active_run_id) REFERENCES market_data_runs(id) ON DELETE SET NULL
 );
 
+-- A refresh inserts and removes one guard inside the same D1 batch that publishes
+-- market data (and, when required, its matching valuation).  The NOT NULL proof
+-- deliberately aborts the transaction when any optimistic-version predicate is
+-- false, so no half-published ACTIVE state can escape the batch.
+CREATE TABLE IF NOT EXISTS activation_guards (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  proof INTEGER NOT NULL CHECK (proof = 1),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 INSERT OR IGNORE INTO market_state (user_id, market_revision)
 SELECT id, 0 FROM users
 ;

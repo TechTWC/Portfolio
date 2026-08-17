@@ -174,8 +174,29 @@ try {
     PRAGMA foreign_keys = ON;
     SELECT
       (SELECT market_revision FROM market_state WHERE user_id = 'user-1') || '|' ||
+      (SELECT count(*) FROM activation_guards) || '|' ||
       (SELECT count(*) FROM pragma_foreign_key_check);
-  `), '0|0')
+  `), '0|0|0')
+
+  const failedActivationGate = spawnSync('sqlite3', ['-batch', database], {
+    input: `.bail on
+      PRAGMA foreign_keys = ON;
+      BEGIN;
+      INSERT INTO activation_guards (id, user_id, proof)
+      VALUES ('failed-guard', 'user-1', (SELECT CASE WHEN 0 THEN 1 END));
+      UPDATE market_state SET market_revision = 99 WHERE user_id = 'user-1';
+      COMMIT;`,
+    encoding: 'utf8',
+  })
+  assert.notEqual(failedActivationGate.status, 0)
+  assert.match(failedActivationGate.stderr, /NOT NULL constraint failed: activation_guards\.proof/)
+  assert.equal(execute(`
+    PRAGMA foreign_keys = ON;
+    SELECT
+      (SELECT market_revision FROM market_state WHERE user_id = 'user-1') || '|' ||
+      (SELECT count(*) FROM activation_guards) || '|' ||
+      (SELECT count(*) FROM pragma_foreign_key_check);
+  `), '0|0|0')
 
   execute(`
     PRAGMA foreign_keys = ON;

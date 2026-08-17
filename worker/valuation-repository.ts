@@ -184,12 +184,30 @@ function markDateRange(payload: ValuationSnapshotUpload): { earliest: string; la
   return { earliest: dates[0], latest: dates[dates.length - 1] }
 }
 
-export async function activateValuationSnapshot(
+export type PendingValuationSnapshot = {
+  id: string
+  revision: number
+  baseRevision: number
+  previousActiveSnapshotId: string | null
+}
+
+export async function discardPendingValuationSnapshot(
+  db: D1Database,
+  userId: string,
+  snapshotId: string,
+): Promise<void> {
+  await db.prepare(
+    `DELETE FROM valuation_snapshots
+      WHERE id = ? AND user_id = ? AND status = 'PENDING'`,
+  ).bind(snapshotId, userId).run()
+}
+
+export async function createPendingValuationSnapshot(
   db: D1Database,
   user: User,
   payload: ValuationSnapshotUpload,
   validation: Record<string, unknown>,
-): Promise<void> {
+): Promise<PendingValuationSnapshot> {
   const revision = payload.baseRevision + 1
   const snapshotId = crypto.randomUUID()
   const { earliest, latest } = markDateRange(payload)
@@ -251,7 +269,30 @@ export async function activateValuationSnapshot(
       ))
       await db.batch(statements)
     }
+  } catch (error) {
+    await discardPendingValuationSnapshot(db, user.id, snapshotId)
+    throw error
+  }
 
+  return {
+    id: snapshotId,
+    revision,
+    baseRevision: payload.baseRevision,
+    previousActiveSnapshotId: stateBefore.active_snapshot_id,
+  }
+}
+
+export async function activateValuationSnapshot(
+  db: D1Database,
+  user: User,
+  payload: ValuationSnapshotUpload,
+  validation: Record<string, unknown>,
+): Promise<void> {
+  const pending = await createPendingValuationSnapshot(db, user, payload, validation)
+  const snapshotId = pending.id
+  const revision = pending.revision
+
+  try {
     const current = await currentValuationRevision(db, user.id)
     if (current !== payload.baseRevision) throw new Error('VALUATION_VERSION_CONFLICT')
     const currentTransactions = await getPortfolioState(db, user.id)
@@ -304,12 +345,12 @@ export async function activateValuationSnapshot(
             WHERE id = ? AND user_id = ? AND status = 'ACTIVE'`,
         ).bind(snapshotId, user.id),
       ]
-      if (stateBefore.active_snapshot_id) {
+      if (pending.previousActiveSnapshotId) {
         repair.push(db.prepare(
           `UPDATE valuation_snapshots
               SET status = 'ACTIVE'
             WHERE id = ? AND user_id = ? AND status = 'ARCHIVED'`,
-        ).bind(stateBefore.active_snapshot_id, user.id))
+        ).bind(pending.previousActiveSnapshotId, user.id))
       }
       await db.batch(repair)
       const latestTransactions = await getPortfolioState(db, user.id)
@@ -322,10 +363,7 @@ export async function activateValuationSnapshot(
       throw new Error('VALUATION_VERSION_CONFLICT')
     }
   } catch (error) {
-    await db.prepare(
-      `DELETE FROM valuation_snapshots
-        WHERE id = ? AND user_id = ? AND status = 'PENDING'`,
-    ).bind(snapshotId, user.id).run()
+    await discardPendingValuationSnapshot(db, user.id, snapshotId)
     throw error
   }
 }

@@ -16,6 +16,7 @@ import { transactionBindingMatches } from '../src/lib/valuation-lineage'
 import {
   activateMarketRun,
   createPendingMarketRun,
+  failPendingMarketRun,
   getMarketDataBootstrap,
   latestMarketDates,
   type MarketObservationInsert,
@@ -23,8 +24,9 @@ import {
 import { fetchYahooDailyHistory, yahooSymbolForFx } from './market-data-provider'
 import { getPortfolioState, getTransactionsForDataset } from './repository'
 import {
-  activateValuationSnapshot,
+  createPendingValuationSnapshot,
   currentValuationRevision,
+  discardPendingValuationSnapshot,
   getActiveValuationMarks,
   getValuationBootstrap,
 } from './valuation-repository'
@@ -257,19 +259,35 @@ export async function refreshMarketData(
     results,
     observations,
   })
-  await activateMarketRun(db, user.id, run, {
-    transactionDatasetId: request.transactionDatasetId,
-    transactionRevision: request.transactionRevision,
-  })
-  if (!valuationUnchanged) {
-    await activateValuationSnapshot(db, user, valuationPayload, {
-      duplicateCount: 0,
-      futureMarkCount: 0,
-      totalAssetsTwd: candidate.totalAssetsTwd,
-      source: MARKET_DATA_PROVIDER,
-      marketRunId: run.id,
-      marketRevision: run.revision,
-    })
+  let pendingValuation: Awaited<ReturnType<typeof createPendingValuationSnapshot>> | null = null
+  try {
+    if (!valuationUnchanged) {
+      pendingValuation = await createPendingValuationSnapshot(db, user, valuationPayload, {
+        duplicateCount: 0,
+        futureMarkCount: 0,
+        totalAssetsTwd: candidate.totalAssetsTwd,
+        source: MARKET_DATA_PROVIDER,
+        marketRunId: run.id,
+        marketRevision: run.revision,
+      })
+    }
+    await activateMarketRun(db, user.id, run, {
+      transactionDatasetId: request.transactionDatasetId,
+      transactionRevision: request.transactionRevision,
+    }, pendingValuation)
+  } catch (error) {
+    await Promise.allSettled([
+      failPendingMarketRun(
+        db,
+        user.id,
+        run.id,
+        error instanceof Error ? error.message : String(error),
+      ),
+      ...(pendingValuation
+        ? [discardPendingValuationSnapshot(db, user.id, pendingValuation.id)]
+        : []),
+    ])
+    throw error
   }
 
   return {

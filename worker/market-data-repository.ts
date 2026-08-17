@@ -8,6 +8,7 @@ import {
 import type { NormalizedValuationMark } from '../src/lib/valuation-contracts'
 import { sha256Hex } from '../src/lib/hash'
 import { getPortfolioState } from './repository'
+import type { PendingValuationSnapshot } from './valuation-repository'
 
 type User = { id: string; email: string }
 
@@ -224,6 +225,18 @@ export async function createPendingMarketRun(
   }
 }
 
+export async function failPendingMarketRun(
+  db: D1Database,
+  userId: string,
+  runId: string,
+  reason: string,
+): Promise<void> {
+  await db.prepare(
+    `UPDATE market_data_runs SET status = 'FAILED', validation_json = ?
+      WHERE id = ? AND user_id = ? AND status = 'PENDING'`,
+  ).bind(JSON.stringify({ complete: false, error: reason }), runId, userId).run()
+}
+
 export async function activateMarketRun(
   db: D1Database,
   userId: string,
@@ -234,12 +247,88 @@ export async function activateMarketRun(
     previousActiveRunId: string | null
   },
   binding: { transactionDatasetId: string; transactionRevision: number },
+  valuation: PendingValuationSnapshot | null = null,
 ): Promise<void> {
-  const results = await db.batch([
+  const guardId = crypto.randomUUID()
+  const valuationGate = valuation ? `
+          AND EXISTS (
+            SELECT 1 FROM valuation_state valuation
+             WHERE valuation.user_id = ?
+               AND valuation.valuation_revision = ?
+               AND valuation.active_snapshot_id IS ?
+          )
+          AND EXISTS (
+            SELECT 1 FROM valuation_snapshots candidate_valuation
+             WHERE candidate_valuation.id = ? AND candidate_valuation.user_id = ?
+               AND candidate_valuation.revision = ? AND candidate_valuation.status = 'PENDING'
+          )
+          AND (? IS NULL OR EXISTS (
+            SELECT 1 FROM valuation_snapshots previous_valuation
+             WHERE previous_valuation.id = ? AND previous_valuation.user_id = ?
+               AND previous_valuation.status = 'ACTIVE'
+          ))` : ''
+  const guardBindings: unknown[] = [
+    guardId,
+    userId,
+    userId,
+    run.baseRevision,
+    run.previousActiveRunId,
+    userId,
+    binding.transactionDatasetId,
+    binding.transactionRevision,
+    run.id,
+    userId,
+    run.revision,
+    run.previousActiveRunId,
+    run.previousActiveRunId,
+    userId,
+  ]
+  if (valuation) {
+    guardBindings.push(
+      userId,
+      valuation.baseRevision,
+      valuation.previousActiveSnapshotId,
+      valuation.id,
+      userId,
+      valuation.revision,
+      valuation.previousActiveSnapshotId,
+      valuation.previousActiveSnapshotId,
+      userId,
+    )
+  }
+
+  const statements = [
+    db.prepare(
+      `INSERT INTO activation_guards (id, user_id, proof)
+       VALUES (?, ?, (
+         SELECT CASE WHEN
+          EXISTS (
+            SELECT 1 FROM market_state market
+             WHERE market.user_id = ? AND market.market_revision = ?
+               AND market.active_run_id IS ?
+          )
+          AND EXISTS (
+            SELECT 1 FROM portfolio_state portfolio
+             WHERE portfolio.user_id = ?
+               AND portfolio.active_dataset_id = ?
+               AND portfolio.cloud_revision = ?
+          )
+          AND EXISTS (
+            SELECT 1 FROM market_data_runs candidate
+             WHERE candidate.id = ? AND candidate.user_id = ?
+               AND candidate.revision = ? AND candidate.status = 'PENDING'
+          )
+          AND (? IS NULL OR EXISTS (
+            SELECT 1 FROM market_data_runs previous
+             WHERE previous.id = ? AND previous.user_id = ? AND previous.status = 'ACTIVE'
+          ))${valuationGate}
+         THEN 1 END
+       ))`,
+    ).bind(...guardBindings),
     db.prepare(
       `UPDATE market_data_runs SET status = 'ARCHIVED'
-        WHERE user_id = ? AND status = 'ACTIVE'`,
-    ).bind(userId),
+        WHERE id IS ? AND user_id = ? AND status = 'ACTIVE'`,
+    ).bind(run.previousActiveRunId, userId),
     db.prepare(
       `UPDATE market_data_runs SET status = 'ACTIVE', activated_at = datetime('now')
         WHERE id = ? AND user_id = ? AND revision = ? AND status = 'PENDING'`,
@@ -248,35 +337,70 @@ export async function activateMarketRun(
       `UPDATE market_state
           SET active_run_id = ?, market_revision = ?, updated_at = datetime('now')
         WHERE user_id = ? AND market_revision = ? AND active_run_id IS ?
-          AND EXISTS (
-            SELECT 1 FROM market_data_runs candidate
-             WHERE candidate.id = ? AND candidate.user_id = ? AND candidate.status = 'ACTIVE'
-          )
-          AND EXISTS (
-            SELECT 1 FROM portfolio_state portfolio
-             WHERE portfolio.user_id = ?
-               AND portfolio.active_dataset_id = ?
-               AND portfolio.cloud_revision = ?
-          )`,
+          AND EXISTS (SELECT 1 FROM activation_guards WHERE id = ? AND user_id = ?)`,
     ).bind(
       run.id, run.revision, userId, run.baseRevision, run.previousActiveRunId,
-      run.id, userId,
-      userId, binding.transactionDatasetId, binding.transactionRevision,
+      guardId, userId,
     ),
-  ])
-  const stateUpdate = results.at(-1)
-  if (!stateUpdate?.success || stateUpdate.meta.changes !== 1) {
-    await db.batch([
+  ]
+  if (valuation) {
+    statements.push(
       db.prepare(
-        `UPDATE market_data_runs SET status = 'FAILED'
-          WHERE id = ? AND user_id = ? AND status = 'ACTIVE'`,
-      ).bind(run.id, userId),
-      ...(run.previousActiveRunId ? [db.prepare(
-        `UPDATE market_data_runs SET status = 'ACTIVE'
-          WHERE id = ? AND user_id = ? AND status = 'ARCHIVED'`,
-      ).bind(run.previousActiveRunId, userId)] : []),
-    ])
-    throw new Error('MARKET_DATA_VERSION_CONFLICT')
+        `UPDATE valuation_snapshots SET status = 'ARCHIVED'
+          WHERE id IS ? AND user_id = ? AND status = 'ACTIVE'`,
+      ).bind(valuation.previousActiveSnapshotId, userId),
+      db.prepare(
+        `UPDATE valuation_snapshots SET status = 'ACTIVE', activated_at = datetime('now')
+          WHERE id = ? AND user_id = ? AND revision = ? AND status = 'PENDING'`,
+      ).bind(valuation.id, userId, valuation.revision),
+      db.prepare(
+        `UPDATE valuation_state
+            SET active_snapshot_id = ?, valuation_revision = ?, updated_at = datetime('now')
+          WHERE user_id = ? AND valuation_revision = ? AND active_snapshot_id IS ?
+            AND EXISTS (SELECT 1 FROM activation_guards WHERE id = ? AND user_id = ?)`,
+      ).bind(
+        valuation.id,
+        valuation.revision,
+        userId,
+        valuation.baseRevision,
+        valuation.previousActiveSnapshotId,
+        guardId,
+        userId,
+      ),
+    )
+  }
+  statements.push(
+    db.prepare('DELETE FROM activation_guards WHERE id = ? AND user_id = ?').bind(guardId, userId),
+  )
+
+  try {
+    const results = await db.batch(statements)
+    const requiredIndexes = valuation ? [0, 2, 3, 5, 6, 7] : [0, 2, 3, 4]
+    if (requiredIndexes.some((index) => !results[index]?.success || results[index].meta.changes !== 1)) {
+      throw new Error('MARKET_DATA_ACTIVATION_INVARIANT')
+    }
+  } catch (error) {
+    const portfolio = await getPortfolioState(db, userId)
+    if (portfolio.activeDatasetId !== binding.transactionDatasetId
+      || portfolio.cloudRevision !== binding.transactionRevision) {
+      throw new Error('TRANSACTION_VERSION_CONFLICT')
+    }
+    const latestMarket = await getMarketState(db, userId)
+    if (latestMarket.market_revision !== run.baseRevision
+      || latestMarket.active_run_id !== run.previousActiveRunId) {
+      throw new Error('MARKET_DATA_VERSION_CONFLICT')
+    }
+    if (valuation) {
+      const latestValuation = await db.prepare(
+        'SELECT active_snapshot_id, valuation_revision FROM valuation_state WHERE user_id = ?',
+      ).bind(userId).first<{ active_snapshot_id: string | null; valuation_revision: number }>()
+      if (!latestValuation
+        || latestValuation.valuation_revision !== valuation.baseRevision
+        || latestValuation.active_snapshot_id !== valuation.previousActiveSnapshotId) {
+        throw new Error('VALUATION_VERSION_CONFLICT')
+      }
+    }
+    throw error
   }
 }
 

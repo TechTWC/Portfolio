@@ -31,10 +31,11 @@ gate:
 3. reject HTTP/provider errors, missing closes, non-positive values, currency mismatches,
    unfinished current-session bars, and data older than ten calendar days;
 4. reconstruct the latest valuation in memory and require a complete result;
-5. save a PENDING market-data run and append-only observations;
-6. activate the market-data revision only while the transaction binding still matches;
-7. activate a new valuation snapshot only if latest marks changed or the transaction binding
-   became stale.
+5. save a PENDING market-data run, append-only observations, and (when required) a PENDING
+   valuation snapshot;
+6. use one guarded D1 batch to verify transaction, market, and valuation revisions and publish
+   the market-data run together with its matching valuation;
+7. abort and roll back the entire publication batch when any concurrent request wins first.
 
 If any provider or completeness check fails before activation, the prior ACTIVE valuation is
 preserved. Market-data and valuation revisions remain separate and explicit.
@@ -66,5 +67,7 @@ XIRR or a complete TWR chain.
 - This release is user-triggered; Cloudflare Cron scheduling is deferred.
 - Corporate actions, delistings, ticker changes, dividends, and adjusted-close total-return
   methodology require a separate reviewed module.
+- Until that module exists, the UI labels the absolute series as a price-only TWD market-value
+  curve and blocks cumulative TWR, annualized TWR, and drawdown claims.
 - SPY data is stored, but benchmark/strategy calculations and comparison UI are deferred.
 - No brokerage login, trading credential, or order execution is used.

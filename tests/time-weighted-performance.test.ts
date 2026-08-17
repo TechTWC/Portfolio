@@ -175,6 +175,7 @@ describe('time-weighted performance and drawdown', () => {
       valuationRevision: 4,
       valuationSnapshotId: 'snapshot-v4',
       valuationDate: '2026-03-01',
+      totalReturnCoverage: 'COMPLETE',
     })
 
     expect(result.observationDates).toEqual(['2026-01-01', '2026-02-01', '2026-03-01'])
@@ -199,6 +200,7 @@ describe('time-weighted performance and drawdown', () => {
       valuationRevision: 4,
       valuationSnapshotId: 'snapshot-v4',
       valuationDate: '2026-03-01',
+      totalReturnCoverage: 'COMPLETE',
     })
 
     expect(result.provenance).toEqual({
@@ -208,6 +210,29 @@ describe('time-weighted performance and drawdown', () => {
       valuationDate: '2026-03-01',
       calculationVersion: HISTORICAL_PERFORMANCE_CALCULATION_VERSION,
     })
+  })
+
+  it('keeps the absolute equity curve but blocks TWR claims without distributions and corporate actions', () => {
+    const result = buildHistoricalPerformanceSeries({
+      transactions: [cashTransaction({ tradeDate: '2026-01-01', amountForeign: 10_000 })],
+      marks: [],
+      dates: ['2026-01-01', '2026-03-01'],
+      transactionRevision: 6,
+      valuationRevision: 4,
+      valuationSnapshotId: 'snapshot-v4',
+      valuationDate: '2026-03-01',
+      totalReturnCoverage: 'PRICE_ONLY',
+    })
+
+    expect(result.performance.complete).toBe(false)
+    expect(result.performance.cumulativeTwr).toBeNull()
+    expect(result.performance.annualizedTwr).toBeNull()
+    expect(result.performance.drawdown.maximumDrawdown).toBeNull()
+    expect(result.performance.points.map((point) => point.totalAssetsTwd)).toEqual([10_000, 10_000])
+    expect(result.performance.points.every((point) => point.cumulativeTwr === null)).toBe(true)
+    expect(result.performance.issues).toContainEqual(expect.objectContaining({
+      code: 'UNSUPPORTED_TOTAL_RETURN_COVERAGE',
+    }))
   })
 
   it('blocks the whole chain when any required NAV point is incomplete', () => {

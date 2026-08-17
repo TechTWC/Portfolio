@@ -121,6 +121,7 @@ export default function HistoricalNavWorkspace() {
       valuationRevision: valuation.valuationRevision,
       valuationSnapshotId: valuation.activeSnapshot?.id ?? null,
       valuationDate: activeValuationDate,
+      totalReturnCoverage: 'PRICE_ONLY',
     })
   }, [valuation, marketData])
 
@@ -163,6 +164,10 @@ export default function HistoricalNavWorkspace() {
             ｜計算 {provenance.calculationVersion}
           </div>
 
+          <div className="banner">
+            目前尚未納入股息、股票／ETF 分割及其他公司行動；下方只提供未還原收盤價計算的 TWD 市值曲線，不能視為完整總報酬、TWR 或回撤。
+          </div>
+
           <div className="metrics-grid">
             <Metric label="累積 TWR" value={formatPercent(performance.cumulativeTwr)} hint="排除外部入出金後的幾何鏈結報酬" />
             <Metric label="年化 TWR" value={formatPercent(performance.annualizedTwr)} hint={performance.dayCount === null ? '—' : `Actual/365，共 ${performance.dayCount} 天`} />
@@ -179,7 +184,7 @@ export default function HistoricalNavWorkspace() {
 
           <div className="historical-chart-grid">
             <LineChart
-              title="投資組合 TWD 權益曲線"
+              title="投資組合 TWD 市值曲線（未含股息／公司行動）"
               points={performance.points}
               valueFor={(point) => point.totalAssetsTwd}
               formatValue={formatAmount}
