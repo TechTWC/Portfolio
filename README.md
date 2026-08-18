@@ -27,6 +27,7 @@
 - 跨資料集穩定交易 ID 與保守的交易更正血緣
 - 估值 Snapshot 綁定精確交易 Dataset／Revision
 - 交易更新後估值顯示 `STALE`，舊結果仍以原交易版本重現
+- 使用者觸發的自動收盤行情 v1（開發分支）：歷史 raw close、FX、SPY 基準與增量快取
 
 ### Python reference engine fixes（下一批推送）
 

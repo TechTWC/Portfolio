@@ -13,7 +13,10 @@ import {
 } from '../src/lib/valuation-contracts'
 import { compareValuationMarks } from '../src/lib/valuation-diff'
 import { transactionBindingMatches } from '../src/lib/valuation-lineage'
+import { marketDataRefreshRequestSchema } from '../src/lib/market-data-contracts'
 import { requireUser, type Bindings, type Variables } from './auth'
+import { getMarketDataBootstrap } from './market-data-repository'
+import { refreshMarketData } from './market-data-service'
 import {
   activateDataset,
   currentRevision,
@@ -152,6 +155,52 @@ async function evaluateValuationCandidate(
 
 app.get('/api/valuations/bootstrap', async (c) => {
   return c.json(await getValuationBootstrap(c.env.DB, c.get('user')))
+})
+
+app.get('/api/market-data/bootstrap', async (c) => {
+  return c.json(await getMarketDataBootstrap(
+    c.env.DB,
+    c.get('user'),
+    c.req.query('includeMarks') !== '0',
+  ))
+})
+
+app.post('/api/market-data/refresh', async (c) => {
+  const parsed = marketDataRefreshRequestSchema.safeParse(await c.req.json().catch(() => null))
+  if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? '行情更新參數錯誤' }, 400)
+  try {
+    return c.json(await refreshMarketData(c.env.DB, c.get('user'), parsed.data), 201)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message === 'TRANSACTION_VERSION_CONFLICT') {
+      const latest = await getPortfolioState(c.env.DB, c.get('user').id)
+      return c.json({
+        error: `交易版本已變更；候選使用 v${parsed.data.transactionRevision}，雲端目前為 v${latest.cloudRevision}`,
+        code: 'TRANSACTION_VERSION_CONFLICT',
+        baseRevision: parsed.data.transactionRevision,
+        currentRevision: latest.cloudRevision,
+      }, 409)
+    }
+    if (message === 'VALUATION_VERSION_CONFLICT') {
+      const latestRevision = await currentValuationRevision(c.env.DB, c.get('user').id)
+      return c.json({
+        error: `估值版本已變更；此分頁為 v${parsed.data.baseValuationRevision}，雲端目前為 v${latestRevision}`,
+        code: 'VALUATION_VERSION_CONFLICT',
+        baseRevision: parsed.data.baseValuationRevision,
+        currentRevision: latestRevision,
+      }, 409)
+    }
+    if (message === 'MARKET_DATA_VERSION_CONFLICT') {
+      return c.json({ error: '行情版本已被其他分頁更新，請重新載入後再試', code: message }, 409)
+    }
+    if (message.startsWith('VALUATION_INCOMPLETE:')) {
+      return c.json({ error: `自動行情未涵蓋完整持倉，舊估值未被覆蓋（${message.split(':')[1]}）`, code: 'VALUATION_INCOMPLETE' }, 422)
+    }
+    return c.json({
+      error: `行情來源更新失敗，舊的 ACTIVE 估值未被覆蓋：${message}`,
+      code: 'MARKET_DATA_PROVIDER_ERROR',
+    }, 502)
+  }
 })
 
 app.post('/api/valuations/preview', async (c) => {

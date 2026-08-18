@@ -32,9 +32,10 @@ function activationRaceDatabase() {
           ? 'valuationStateBefore'
           : sql.includes('FROM transactions t')
             ? 'transactions'
-            : sql.includes('INSERT INTO users')
+        : sql.includes('INSERT INTO users')
               || sql.includes('INSERT INTO portfolio_state')
               || sql.includes('INSERT INTO valuation_state')
+              || sql.includes('INSERT INTO market_state')
               ? 'authInit'
               : sql.includes('INSERT INTO valuation_snapshots')
               ? 'insertSnapshot'
