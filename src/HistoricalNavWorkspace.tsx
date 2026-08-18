@@ -8,6 +8,7 @@ import {
 import type { ValuationBootstrapResponse } from './lib/valuation-contracts'
 import { toValuationMark } from './lib/valuation-contracts'
 import type { MarketDataBootstrapResponse } from './lib/market-data-contracts'
+import { drawdownMetricPresentation } from './lib/drawdown-presentation'
 
 function formatAmount(value: number | null): string {
   if (value === null) return '—'
@@ -128,6 +129,9 @@ export default function HistoricalNavWorkspace() {
   const series = result?.navSeries ?? null
   const performance = result?.performance ?? null
   const provenance = result?.provenance ?? null
+  const drawdownPresentation = performance
+    ? drawdownMetricPresentation(performance.complete, performance.drawdown)
+    : null
   const pointByDate = useMemo(
     () => new Map(series?.points.map((point) => [point.asOfDate, point]) ?? []),
     [series],
@@ -172,14 +176,14 @@ export default function HistoricalNavWorkspace() {
             <Metric label="累積 TWR" value={formatPercent(performance.cumulativeTwr)} hint="排除外部入出金後的幾何鏈結報酬" />
             <Metric label="年化 TWR" value={formatPercent(performance.annualizedTwr)} hint={performance.dayCount === null ? '—' : `Actual/365，共 ${performance.dayCount} 天`} />
             <Metric label="最大回撤" value={formatPercent(performance.drawdown.maximumDrawdown)} hint={performance.drawdown.peakDate && performance.drawdown.troughDate ? `${performance.drawdown.peakDate} → ${performance.drawdown.troughDate}` : '—'} />
-            <Metric label="目前回撤" value={formatPercent(performance.drawdown.currentDrawdown)} hint={performance.drawdown.currentlyInDrawdown ? `仍在回撤，已 ${performance.drawdown.currentUnderwaterDays ?? 0} 天` : '目前已回到歷史高點'} />
+            <Metric label="目前回撤" value={formatPercent(performance.drawdown.currentDrawdown)} hint={drawdownPresentation?.currentDrawdownHint} />
           </div>
 
           <div className="metrics-grid">
             <Metric label="最大回撤高點" value={performance.drawdown.peakDate ?? '—'} />
             <Metric label="最大回撤低點" value={performance.drawdown.troughDate ?? '—'} hint={performance.drawdown.declineDays === null ? undefined : `下跌歷時 ${performance.drawdown.declineDays} 天`} />
-            <Metric label="修復日期" value={performance.drawdown.recoveryDate ?? '尚未修復'} hint={performance.drawdown.recoveryDays === null ? undefined : `低點後 ${performance.drawdown.recoveryDays} 天`} />
-            <Metric label="水下期間" value={performance.drawdown.underwaterDays === null ? '—' : `${performance.drawdown.underwaterDays} 天`} hint="自前高至修復；未修復則算到最新點" />
+            <Metric label="修復日期" value={drawdownPresentation?.recoveryDateValue ?? '—'} hint={performance.drawdown.recoveryDays === null ? undefined : `低點後 ${performance.drawdown.recoveryDays} 天`} />
+            <Metric label="水下期間" value={performance.drawdown.underwaterDays === null ? '—' : `${performance.drawdown.underwaterDays} 天`} hint={drawdownPresentation?.underwaterHint} />
           </div>
 
           <div className="historical-chart-grid">
