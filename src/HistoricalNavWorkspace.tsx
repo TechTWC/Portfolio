@@ -35,6 +35,10 @@ function Metric({ label, value, hint }: { label: string; value: string; hint?: s
   )
 }
 
+function DetailValue({ label, value }: { label: string; value: string }) {
+  return <div><dt>{label}</dt><dd>{value}</dd></div>
+}
+
 function LineChart({
   title,
   points,
@@ -209,15 +213,18 @@ export default function HistoricalNavWorkspace() {
             <Metric label="不完整 NAV 點" value={series.incompletePointCount.toLocaleString()} hint={series.incompletePointCount > 0 ? '缺少價格、匯率或帳務資料' : '所有觀察點可完整估值'} />
           </div>
 
-          <div className="empty-state">
-            交易 v{provenance.transactionRevision}｜估值 v{provenance.valuationRevision}
-            ｜估值 Snapshot {provenance.valuationSnapshotId ?? '—'}
-            ｜估值日 {provenance.valuationDate ?? '—'}
-            ｜行情 {marketData?.activeRun ? `v${marketData.marketRevision} ${marketData.activeRun.provider}` : '估值檔'}
-            ｜計算 {provenance.calculationVersion}
-          </div>
+          <details className="lineage-disclosure">
+            <summary>資料來源與計算版本</summary>
+            <p>
+              交易 v{provenance.transactionRevision}｜估值 v{provenance.valuationRevision}
+              ｜估值 Snapshot {provenance.valuationSnapshotId ?? '—'}
+              ｜估值日 {provenance.valuationDate ?? '—'}
+              ｜行情 {marketData?.activeRun ? `v${marketData.marketRevision} ${marketData.activeRun.provider}` : '估值檔'}
+              ｜計算 {provenance.calculationVersion}
+            </p>
+          </details>
 
-          <div className="banner">
+          <div className="banner warning">
             目前尚未納入股息、股票／ETF 分割及其他公司行動；下方只提供未還原收盤價計算的 TWD 市值曲線，不能視為完整總報酬、TWR 或回撤。
           </div>
 
@@ -270,7 +277,8 @@ export default function HistoricalNavWorkspace() {
           </div></div>
 
           {performance.points.length === 0 ? <div className="empty-state">目前沒有可用的歷史觀察日期。</div> : (
-            <div className="table-wrap"><table>
+            <>
+            <div className="table-wrap historical-desktop-table"><table>
               <thead><tr>
                 <th>日期</th><th>狀態</th>
                 <th className="numeric">TWD NAV</th>
@@ -305,6 +313,32 @@ export default function HistoricalNavWorkspace() {
                 )
               })}</tbody>
             </table></div>
+            <div className="historical-mobile-list" aria-label="歷史 NAV 明細">
+              {visiblePerformancePoints.map((point) => {
+                const navPoint = pointByDate.get(point.date)
+                return (
+                  <details className="historical-mobile-row" key={`mobile-${point.date}`}>
+                    <summary>
+                      <span><strong>{point.date}</strong><small>{point.complete ? '完整' : '不完整'}</small></span>
+                      <strong>{formatAmount(point.totalAssetsTwd)} TWD</strong>
+                    </summary>
+                    <dl>
+                      <DetailValue label="持倉市值" value={formatAmount(navPoint?.positionValueTwd ?? null)} />
+                      <DetailValue label="現金價值" value={formatAmount(navPoint?.cashValueTwd ?? null)} />
+                      <DetailValue label="當日投入" value={formatAmount(point.contributionTwd)} />
+                      <DetailValue label="當日出金" value={formatAmount(point.withdrawalTwd)} />
+                      <DetailValue label="單期報酬" value={formatPercent(point.periodReturn)} />
+                      <DetailValue label="累積 TWR" value={formatPercent(point.cumulativeTwr)} />
+                      <DetailValue label="淨值指數" value={formatIndex(point.growthIndex)} />
+                      <DetailValue label="回撤" value={formatPercent(point.drawdown)} />
+                      <DetailValue label="價格／匯率日期" value={navPoint ? `${navPoint.latestPriceDateUsed ?? '—'}／${navPoint.latestFxDateUsed ?? '—'}` : '—'} />
+                      <DetailValue label="問題" value={navPoint?.issues.length ? navPoint.issues.map((issue) => issue.code).join('、') : '—'} />
+                    </dl>
+                  </details>
+                )
+              })}
+            </div>
+            </>
           )}
           {performance.points.length > navPageSize && (
             <div className="pagination" aria-label="歷史 NAV 分頁">
@@ -318,7 +352,15 @@ export default function HistoricalNavWorkspace() {
             <div className="rejected-list">
               <strong>歷史績效尚不能完整計算</strong>
               <ul>{performance.issues.map((issue, index) => (
-                <li key={`${issue.code}-${index}`}>{issue.code}：{issue.message}{issue.dates.length ? `（${issue.dates.join('、')}）` : ''}</li>
+                <li key={`${issue.code}-${index}`}>
+                  <span>{issue.code}：{issue.message}</span>
+                  {issue.dates.length > 0 && (
+                    <details className="issue-disclosure">
+                      <summary>查看 {issue.dates.length.toLocaleString()} 個受影響日期</summary>
+                      <p>{issue.dates.join('、')}</p>
+                    </details>
+                  )}
+                </li>
               ))}</ul>
             </div>
           )}
