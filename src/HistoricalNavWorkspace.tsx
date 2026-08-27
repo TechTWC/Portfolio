@@ -48,32 +48,59 @@ function LineChart({
   formatValue: (value: number | null) => string
   className: string
 }) {
-  const valid = points
+  const [range, setRange] = useState<'1M' | '3M' | 'YTD' | '1Y' | 'ALL'>('ALL')
+  const [expanded, setExpanded] = useState(false)
+  const allValid = points
     .map((point) => ({ date: point.date, value: valueFor(point) }))
     .filter((item): item is { date: string; value: number } => item.value !== null && Number.isFinite(item.value))
 
-  if (valid.length < 2) return <div className="empty-state">{title}至少需要兩個完整計算點。</div>
+  const valid = useMemo(() => {
+    const end = allValid.at(-1)?.date
+    if (!end || range === 'ALL') return allValid
+    const endDate = new Date(`${end}T00:00:00Z`)
+    const cutoff = new Date(endDate)
+    if (range === '1M') cutoff.setUTCMonth(cutoff.getUTCMonth() - 1)
+    if (range === '3M') cutoff.setUTCMonth(cutoff.getUTCMonth() - 3)
+    if (range === '1Y') cutoff.setUTCFullYear(cutoff.getUTCFullYear() - 1)
+    if (range === 'YTD') cutoff.setUTCMonth(0, 1)
+    const cutoffValue = cutoff.toISOString().slice(0, 10)
+    return allValid.filter((item) => item.date >= cutoffValue)
+  }, [allValid, range])
+
+  useEffect(() => {
+    if (!expanded) return
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setExpanded(false) }
+    window.addEventListener('keydown', close)
+    return () => window.removeEventListener('keydown', close)
+  }, [expanded])
 
   const width = 960
   const height = 210
   const paddingX = 34
   const paddingY = 26
   const values = valid.map((item) => item.value)
-  const rawMin = Math.min(...values)
-  const rawMax = Math.max(...values)
+  const rawMin = values.length ? Math.min(...values) : 0
+  const rawMax = values.length ? Math.max(...values) : 0
   const min = rawMin === rawMax ? rawMin - 0.01 : rawMin
   const max = rawMin === rawMax ? rawMax + 0.01 : rawMax
-  const x = (index: number) => paddingX + (index / (valid.length - 1)) * (width - 2 * paddingX)
+  const x = (index: number) => paddingX + (index / Math.max(1, valid.length - 1)) * (width - 2 * paddingX)
   const y = (value: number) => paddingY + ((max - value) / (max - min)) * (height - 2 * paddingY)
   const coordinates = valid.map((item, index) => `${x(index)},${y(item.value)}`).join(' ')
 
-  return (
-    <article className="historical-chart-card">
+  const chart = (allowExpand: boolean) => (
+    <>
       <div className="historical-chart-heading">
-        <strong>{title}</strong>
-        <span>{valid[0].date} → {valid.at(-1)?.date}</span>
+        <div><strong>{title}</strong><span>{valid.length ? `${valid[0].date} → ${valid.at(-1)?.date}` : '所選期間無完整資料'}</span></div>
+        <div className="chart-actions">
+          <div className="chart-range" aria-label="圖表期間">
+            {(['1M', '3M', 'YTD', '1Y', 'ALL'] as const).map((item) => (
+              <button key={item} type="button" className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{item}</button>
+            ))}
+          </div>
+          {allowExpand && <button className="chart-expand" type="button" onClick={() => setExpanded(true)} aria-label={`放大${title}`}>放大</button>}
+        </div>
       </div>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
+      {valid.length < 2 ? <div className="empty-state">所選期間至少需要兩個完整計算點；可切換較長期間。</div> : <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
         <line x1={paddingX} y1={paddingY} x2={paddingX} y2={height - paddingY} className="historical-chart-axis" />
         <line x1={paddingX} y1={height - paddingY} x2={width - paddingX} y2={height - paddingY} className="historical-chart-axis" />
         <polyline points={coordinates} className={className} />
@@ -84,12 +111,27 @@ function LineChart({
         ))}
         <text x={paddingX} y="18" className="historical-chart-label">{formatValue(max)}</text>
         <text x={paddingX} y={height - 6} className="historical-chart-label">{formatValue(min)}</text>
-      </svg>
+      </svg>}
+    </>
+  )
+
+  return (
+    <article className="historical-chart-card">
+      {chart(true)}
+      {expanded && (
+        <div className="chart-dialog-backdrop" role="presentation" onMouseDown={() => setExpanded(false)}>
+          <section className="chart-dialog" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
+            <button className="chart-close" type="button" onClick={() => setExpanded(false)} aria-label="關閉放大圖表">關閉</button>
+            {chart(false)}
+          </section>
+        </div>
+      )}
     </article>
   )
 }
 
 export default function HistoricalNavWorkspace() {
+  const [navPage, setNavPage] = useState(0)
   const [valuation, setValuation] = useState<ValuationBootstrapResponse | null>(null)
   const [marketData, setMarketData] = useState<MarketDataBootstrapResponse | null>(null)
   const [error, setError] = useState('')
@@ -136,6 +178,13 @@ export default function HistoricalNavWorkspace() {
     () => new Map(series?.points.map((point) => [point.asOfDate, point]) ?? []),
     [series],
   )
+  const navPageSize = 20
+  const navPageCount = Math.max(1, Math.ceil((performance?.points.length ?? 0) / navPageSize))
+  const safeNavPage = Math.min(navPage, navPageCount - 1)
+  const visiblePerformancePoints = performance?.points.slice(
+    safeNavPage * navPageSize,
+    (safeNavPage + 1) * navPageSize,
+  ) ?? []
 
   return (
     <section className="panel" id="historical-nav">
@@ -235,7 +284,7 @@ export default function HistoricalNavWorkspace() {
                 <th className="numeric">回撤</th>
                 <th>價格／匯率日期</th><th>問題</th>
               </tr></thead>
-              <tbody>{performance.points.map((point) => {
+              <tbody>{visiblePerformancePoints.map((point) => {
                 const navPoint = pointByDate.get(point.date)
                 return (
                   <tr key={point.date}>
@@ -256,6 +305,13 @@ export default function HistoricalNavWorkspace() {
                 )
               })}</tbody>
             </table></div>
+          )}
+          {performance.points.length > navPageSize && (
+            <div className="pagination" aria-label="歷史 NAV 分頁">
+              <button className="secondary compact" type="button" disabled={safeNavPage === 0} onClick={() => setNavPage((current) => Math.max(0, current - 1))}>上一頁</button>
+              <span>第 {safeNavPage + 1}／{navPageCount} 頁 · 共 {performance.points.length.toLocaleString()} 筆</span>
+              <button className="secondary compact" type="button" disabled={safeNavPage >= navPageCount - 1} onClick={() => setNavPage((current) => Math.min(navPageCount - 1, current + 1))}>下一頁</button>
+            </div>
           )}
 
           {performance.issues.length > 0 && (

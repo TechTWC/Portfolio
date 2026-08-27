@@ -46,7 +46,7 @@ async function userIdForEmail(email: string): Promise<string> {
   return `usr_${Array.from(new Uint8Array(digest)).slice(0, 16).map((b) => b.toString(16).padStart(2, '0')).join('')}`
 }
 
-async function authenticatedEmail(
+export async function authenticatedEmail(
   c: Context<{ Bindings: Bindings; Variables: Variables }>,
 ): Promise<string | Response> {
   if (c.env.AUTH_MODE === 'dev') {
@@ -77,6 +77,22 @@ async function authenticatedEmail(
     console.warn('Cloudflare Access JWT validation failed', error)
     return c.json({ error: 'Cloudflare Access JWT 驗證失敗' }, 403)
   }
+}
+
+export async function requireExistingUser(
+  c: Context<{ Bindings: Bindings; Variables: Variables }>,
+  next: Next,
+) {
+  const result = await authenticatedEmail(c)
+  if (result instanceof Response) return result
+
+  const user = await c.env.DB.prepare(
+    'SELECT id, email FROM users WHERE email = ?',
+  ).bind(result).first<{ id: string; email: string }>()
+  if (!user) return c.json({ error: '此驗證身分尚未建立 Portfolio 使用者' }, 403)
+
+  c.set('user', { id: user.id, email: user.email.toLowerCase() })
+  await next()
 }
 
 export async function requireUser(c: Context<{ Bindings: Bindings; Variables: Variables }>, next: Next) {
