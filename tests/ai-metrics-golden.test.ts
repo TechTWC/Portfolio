@@ -77,6 +77,23 @@ describe('AI official Metric golden parity', () => {
     expect(result.lineage).toMatchObject({ transaction_revision: 8, valuation_version: 7 })
   })
 
+  it('keeps stale valuation lineage bound to its source transaction revision', async () => {
+    const original = baseSession()
+    const bundle = await original.valuationBundle()
+    const session = baseSession({
+      portfolioState: async () => ({
+        activeDatasetId: 'dataset-9', cloudRevision: 9, filename: 'new-transactions.csv',
+        parserVersion: 'parser-v0.9', earliestDate: '2025-01-01', latestDate: '2026-02-01',
+        activatedAt: '2026-02-01 00:00:00',
+      }),
+      valuationBundle: async () => ({ ...bundle, freshness: 'STALE' as const }),
+    })
+
+    const result = await createMetricRegistry().getMetric('nav', {}, context(session))
+    expect(result).toMatchObject({ value: null, status: 'STALE' })
+    expect(result.lineage).toMatchObject({ transaction_revision: 8, valuation_version: 7 })
+  })
+
   it('returns the exact XIRR already produced by buildCurrentPerformance', async () => {
     const official = buildCurrentPerformance({
       transactions: [contribution], valuationDate: '2026-01-01',

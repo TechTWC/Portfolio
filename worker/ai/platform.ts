@@ -68,6 +68,8 @@ async function lineage(
     resourceVersion?: string
     calculationVersion?: string
     sourceVersion?: string
+    transactionRevision?: number
+    valuationVersion?: number
   } = {},
 ): Promise<DataLineage> {
   const [state, valuation, market] = await Promise.all([
@@ -78,8 +80,8 @@ async function lineage(
   return {
     as_of: options.asOf ?? valuation.snapshot?.valuation_date ?? market.run?.latestBarDate ?? null,
     resource_version: options.resourceVersion,
-    transaction_revision: state.cloudRevision,
-    valuation_version: valuation.revision,
+    transaction_revision: options.transactionRevision ?? state.cloudRevision,
+    valuation_version: options.valuationVersion ?? valuation.revision,
     calculation_version: options.calculationVersion,
     source_version: options.sourceVersion ?? market.run?.dataVersion ?? state.parserVersion ?? undefined,
     freshness: dataQuality.status,
@@ -397,6 +399,7 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
           resourceVersion: RESOURCE_VERSION,
           calculationVersion: VALUATION_CALCULATION_VERSION,
           sourceVersion: bundle.snapshot?.parser_version,
+          transactionRevision: bundle.snapshot?.transaction_revision,
         }),
       }
     },
@@ -448,6 +451,7 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
             asOf: market.run?.latestBarDate,
             resourceVersion: RESOURCE_VERSION,
             sourceVersion: market.run?.dataVersion,
+            transactionRevision: market.run?.transactionRevision,
           }),
         }
       },
@@ -513,8 +517,9 @@ async function metricLineage(
   dataQuality: DataQuality,
   calculationVersion: string,
   asOf: string | null,
+  options: { transactionRevision?: number; valuationVersion?: number } = {},
 ): Promise<DataLineage> {
-  return lineage(context, dataQuality, { asOf, calculationVersion })
+  return lineage(context, dataQuality, { asOf, calculationVersion, ...options })
 }
 
 function metricResult(input: Omit<MetricResult, 'lineage'> & { lineage: Promise<DataLineage> }): Promise<MetricResult> {
@@ -540,7 +545,9 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
         metric: 'nav', value, unit: 'TWD', period: { from: asOf, to: asOf }, as_of: asOf,
         status: dataQuality.status, calculation_version: VALUATION_CALCULATION_VERSION,
         issues: dataQuality.issues,
-        lineage: metricLineage(context, dataQuality, VALUATION_CALCULATION_VERSION, asOf),
+        lineage: metricLineage(context, dataQuality, VALUATION_CALCULATION_VERSION, asOf, {
+          transactionRevision: bundle.snapshot?.transaction_revision,
+        }),
       })
     },
   })
@@ -559,7 +566,10 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
         const from = dateParameter(parameters, 'from')
         const to = dateParameter(parameters, 'to')
         if (from && to && from > to) throw new DataPlatformError('INVALID_METRIC_PARAMETER', 'from 不得晚於 to')
-        const series = await context.session.historicalPerformance(from, to)
+        const [series, bundle] = await Promise.all([
+          context.session.historicalPerformance(from, to),
+          context.session.valuationBundle(),
+        ])
         const issues = series ? domainIssues(series.performance.issues) : [issue('MISSING_VALUATION', '尚未建立歷史績效資料')]
         const dataQuality: DataQuality = series?.performance.complete
           ? { status: 'COMPLETE', issues: [] }
@@ -574,7 +584,9 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
           status: dataQuality.status,
           calculation_version: HISTORICAL_PERFORMANCE_CALCULATION_VERSION,
           issues,
-          lineage: metricLineage(context, dataQuality, HISTORICAL_PERFORMANCE_CALCULATION_VERSION, asOf),
+          lineage: metricLineage(context, dataQuality, HISTORICAL_PERFORMANCE_CALCULATION_VERSION, asOf, {
+            transactionRevision: bundle.snapshot?.transaction_revision,
+          }),
         })
       },
     })
@@ -652,7 +664,9 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
         metric: 'cash_ratio', value, unit: 'decimal', period: { from: asOf, to: asOf }, as_of: asOf,
         status: dataQuality.status, calculation_version: VALUATION_CALCULATION_VERSION,
         issues: dataQuality.issues,
-        lineage: metricLineage(context, dataQuality, VALUATION_CALCULATION_VERSION, asOf),
+        lineage: metricLineage(context, dataQuality, VALUATION_CALCULATION_VERSION, asOf, {
+          transactionRevision: bundle.snapshot?.transaction_revision,
+        }),
       })
     },
   })
