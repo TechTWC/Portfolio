@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
+import FxCostWorkspace from './FxCostWorkspace'
+import HistoricalNavWorkspace from './HistoricalNavWorkspace'
+import PerformanceWorkspace from './PerformanceWorkspace'
+import ValuationWorkspace from './ValuationWorkspace'
 import { buildPortfolioAccounting, type PortfolioAccounting } from './lib/accounting'
 import { ApiError, api } from './lib/api'
 import { readCachedBootstrap, writeCachedBootstrap } from './lib/cache'
@@ -12,7 +16,21 @@ import type {
 import { validateDatasetForActivation, type DatasetActivationGate } from './lib/dataset-gate'
 import { compareTransactionSets } from './lib/diff'
 import { PARSER_VERSION, parseTransactionFile, type ParseResult } from './lib/parser'
+import { subscribePortfolioDataUpdates } from './lib/data-sync'
 import { planTransactionLineage } from './lib/transaction-lineage'
+
+type WorkspaceView = 'overview' | 'accounting' | 'cash' | 'valuation' | 'fx-cost' | 'performance' | 'historical' | 'data'
+
+const WORKSPACE_VIEWS: Array<{ id: WorkspaceView; label: string; eyebrow: string; title: string; description: string }> = [
+  { id: 'overview', label: '總覽', eyebrow: 'PORTFOLIO CONTROL CENTER', title: '資產與風險概況', description: '先看資料狀態與需要處理的事項，再進入各分析工作區。' },
+  { id: 'accounting', label: '交易帳務', eyebrow: 'ACCOUNTING', title: '交易帳務', description: '持倉數量、移動平均成本、已實現損益與帳務阻擋問題。' },
+  { id: 'cash', label: '現金與換匯', eyebrow: 'CASH & FX', title: '現金與換匯', description: '各幣別資金流、期末現金與外幣 TWD 成本池。' },
+  { id: 'valuation', label: '估值與市值', eyebrow: 'VALUATION', title: '估值與市值', description: 'Point-in-Time 持倉市值、現金換算、行情與估值更新。' },
+  { id: 'fx-cost', label: '外幣 TWD 成本', eyebrow: 'TWD COST BASIS', title: '外幣 TWD 成本', description: '檢視外幣資金成本、證券 TWD 成本與已實現匯兌損益。' },
+  { id: 'performance', label: '資金報酬與 XIRR', eyebrow: 'MONEY-WEIGHTED RETURN', title: '資金報酬與 XIRR', description: '以正式外部現金流與 ACTIVE 估值計算投資人資金報酬。' },
+  { id: 'historical', label: '歷史 NAV', eyebrow: 'HISTORICAL ANALYSIS', title: '歷史 NAV', description: '檢視歷史市值曲線、資料品質與受控的 TWR／回撤狀態。' },
+  { id: 'data', label: '資料管理', eyebrow: 'DATA MANAGEMENT', title: '資料管理', description: '上傳、預覽、啟用與稽核目前 ACTIVE 交易資料。' },
+]
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return '—'
@@ -35,9 +53,35 @@ function Metric({ label, value, hint }: { label: string; value: string; hint?: s
 }
 
 function DatasetTable({ data }: { data: BootstrapResponse }) {
+  const [query, setQuery] = useState('')
+  const [page, setPage] = useState(0)
+  const pageSize = 20
   if (data.transactions.length === 0) return <div className="empty-state">目前沒有交易資料。</div>
+  const normalizedQuery = query.trim().toLowerCase()
+  const filtered = normalizedQuery
+    ? data.transactions.filter((row) => [
+      row.tradeDate, row.transactionType, row.ticker, row.currency,
+      row.transactionId, row.note,
+    ].some((value) => String(value).toLowerCase().includes(normalizedQuery)))
+    : data.transactions
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const safePage = Math.min(page, pageCount - 1)
+  const visible = filtered.slice(safePage * pageSize, (safePage + 1) * pageSize)
   return (
-    <div className="table-wrap">
+    <>
+      <div className="table-toolbar">
+        <label>
+          <span className="sr-only">搜尋交易</span>
+          <input
+            type="search"
+            value={query}
+            placeholder="搜尋日期、類型、標的、幣別或交易 ID"
+            onChange={(event) => { setQuery(event.target.value); setPage(0) }}
+          />
+        </label>
+        <span>共 {filtered.length.toLocaleString()} 筆</span>
+      </div>
+      <div className="table-wrap">
       <table>
         <thead>
           <tr>
@@ -46,7 +90,7 @@ function DatasetTable({ data }: { data: BootstrapResponse }) {
           </tr>
         </thead>
         <tbody>
-          {data.transactions.slice(0, 100).map((row) => (
+          {visible.map((row) => (
             <tr key={row.transactionId || row.rowHash}>
               <td>{row.tradeDate}</td><td>{row.transactionType}</td><td>{row.ticker || '—'}</td><td>{row.currency}</td>
               <td className="numeric">{row.quantity.toLocaleString()}</td>
@@ -57,8 +101,13 @@ function DatasetTable({ data }: { data: BootstrapResponse }) {
           ))}
         </tbody>
       </table>
-      {data.transactions.length > 100 && <p className="table-note">僅顯示前 100 筆，共 {data.transactions.length.toLocaleString()} 筆。</p>}
-    </div>
+      </div>
+      <div className="pagination" aria-label="交易明細分頁">
+        <button className="secondary compact" type="button" disabled={safePage === 0} onClick={() => setPage((current) => Math.max(0, current - 1))}>上一頁</button>
+        <span>第 {safePage + 1}／{pageCount} 頁</span>
+        <button className="secondary compact" type="button" disabled={safePage >= pageCount - 1} onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))}>下一頁</button>
+      </div>
+    </>
   )
 }
 
@@ -201,6 +250,8 @@ function CashFundingPanel({ ledger }: { ledger: CashLedgerResult }) {
 }
 
 export default function App() {
+  const [view, setView] = useState<WorkspaceView>('overview')
+  const [workspaceRefreshKey, setWorkspaceRefreshKey] = useState(0)
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null)
   const [parseResult, setParseResult] = useState<ParseResult | null>(null)
   const [pendingFile, setPendingFile] = useState<File | null>(null)
@@ -241,6 +292,9 @@ export default function App() {
   }
 
   useEffect(() => { void loadCloud() }, [])
+  useEffect(() => subscribePortfolioDataUpdates(() => {
+    setWorkspaceRefreshKey((current) => current + 1)
+  }), [])
 
   const stats = useMemo(() => {
     const rows = bootstrap?.transactions ?? []
@@ -328,41 +382,85 @@ export default function App() {
 
   const active = bootstrap.activeDataset
   const candidateBlockers = candidateGate?.blockingIssueCount ?? 0
+  const viewMeta = WORKSPACE_VIEWS.find((item) => item.id === view) ?? WORKSPACE_VIEWS[0]
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><span>PA</span><div><strong>Portfolio Analyzer</strong><small>Cloud Ledger</small></div></div>
-        <nav>
-          <a className="active" href="#overview">投資組合總覽</a>
-          <a href="#accounting">交易帳務</a>
-          <a href="#cash-funding">現金與換匯</a>
-          <a href="#upload">交易資料更新</a>
-          <a href="#transactions">交易明細</a>
-          <a className="disabled" aria-disabled="true">策略比較 · 下一階段</a>
-          <a className="disabled" aria-disabled="true">回撤分析 · 下一階段</a>
+        <div className="brand"><span>PA</span><div><strong>Portfolio Analyzer</strong><small>Private Wealth Workspace</small></div></div>
+        <nav aria-label="主要工作區">
+          {WORKSPACE_VIEWS.map((item) => (
+            <button
+              key={item.id}
+              className={view === item.id ? 'active' : ''}
+              onClick={() => setView(item.id)}
+              type="button"
+            >
+              {item.label}
+            </button>
+          ))}
         </nav>
         <div className="identity"><small>登入帳號</small><strong>{bootstrap.user.email}</strong><span>{offline ? '離線快取' : '雲端已同步'}</span></div>
       </aside>
 
       <main className="content">
-        <header className="page-header" id="overview">
-          <div><span className="eyebrow">CLOUD-CANONICAL · LOCAL-CACHED</span><h1>投資組合資料中心</h1><p>交易明細以 D1 ACTIVE Dataset 為正式版本；每個瀏覽器保留 IndexedDB 快取。</p></div>
+        <header className="page-header">
+          <div><span className="eyebrow">{viewMeta.eyebrow}</span><h1>{viewMeta.title}</h1><p>{viewMeta.description}</p></div>
           <div className="header-actions"><span className={`status ${offline ? 'warning' : ''}`}>{offline ? 'Offline' : `Revision ${bootstrap.cloudRevision}`}</span><button className="secondary compact" onClick={() => void loadCloud(false)} disabled={busy}>重新同步</button></div>
         </header>
 
         {(message || error) && <div className={`banner ${error ? 'error' : ''}`}>{error || message}</div>}
 
-        <section className="metrics-grid">
-          <Metric label="有效交易筆數" value={stats.rows.toLocaleString()} hint={active?.filename ?? '尚未上傳'} />
-          <Metric label="證券標的數" value={stats.tickers.toLocaleString()} />
-          <Metric label="雲端版本" value={`v${bootstrap.cloudRevision}`} hint={active ? formatDateTime(active.activatedAt) : '尚未啟用'} />
-          <Metric label="交易期間" value={active ? `${active.earliestDate} → ${active.latestDate}` : '—'} />
+        {view === 'overview' && <>
+          <section className="metrics-grid">
+            <Metric label="有效交易筆數" value={stats.rows.toLocaleString()} hint={active?.filename ?? '尚未上傳'} />
+            <Metric label="目前持有標的" value={accounting.positions.filter((position) => Math.abs(position.quantity) > 1e-9).length.toLocaleString()} hint={`${stats.tickers.toLocaleString()} 個歷史交易標的`} />
+            <Metric label="資料版本" value={`v${bootstrap.cloudRevision}`} hint={active ? formatDateTime(active.activatedAt) : '尚未啟用'} />
+            <Metric label="資料狀態" value={accounting.blockingIssueCount + cashLedger.blockingIssueCount > 0 ? '需處理' : offline ? '離線' : '正常'} hint={active ? `${active.earliestDate} → ${active.latestDate}` : '尚無交易期間'} />
+          </section>
+          <section className="overview-grid" aria-label="工作區快速入口">
+            <article className="focus-card primary-focus">
+              <span>DAILY REVIEW</span>
+              <h2>先確認估值與行情是否最新</h2>
+              <p>進入估值工作區查看 CURRENT／STALE、總資產、持倉市值與缺價問題。</p>
+              <button className="primary" type="button" onClick={() => setView('valuation')}>查看估值與市值</button>
+            </article>
+            <article className="focus-card">
+              <span>DATA QUALITY</span>
+              <h2>{accounting.blockingIssueCount + cashLedger.blockingIssueCount === 0 ? '帳務資料目前可計算' : '發現阻擋問題'}</h2>
+              <p>帳務 {accounting.blockingIssueCount} 項、現金與換匯 {cashLedger.blockingIssueCount} 項阻擋問題。</p>
+              <button className="secondary" type="button" onClick={() => setView('accounting')}>查看帳務明細</button>
+            </article>
+            <article className="focus-card compact-focus">
+              <span>PERFORMANCE</span>
+              <h2>正式績效口徑</h2>
+              <p>股息與公司行動未完整前，系統不會宣稱完整 TWR 或回撤。</p>
+              <button className="secondary" type="button" onClick={() => setView('performance')}>查看資金報酬</button>
+            </article>
+          </section>
+        </>}
+
+        {view === 'accounting' && <AccountingPanel accounting={accounting} />}
+        {view === 'cash' && <CashFundingPanel ledger={cashLedger} />}
+        {view === 'valuation' && <ValuationWorkspace key={`valuation-${workspaceRefreshKey}`} />}
+        {view === 'fx-cost' && <FxCostWorkspace key={`fx-${workspaceRefreshKey}`} />}
+        {view === 'performance' && <PerformanceWorkspace key={`performance-${workspaceRefreshKey}`} />}
+        {view === 'historical' && <HistoricalNavWorkspace key={`historical-${workspaceRefreshKey}`} />}
+
+        {view === 'data' && <>
+        <section className="panel ai-access-panel" id="ai-access">
+          <div className="panel-heading"><div>
+            <span>AI READ-ONLY DATA PLATFORM · v0.1</span>
+            <h2>ChatGPT 唯讀資料介面</h2>
+            <p>透過受控的語意資料層讀取 Portfolio；不開放 D1、SQL、Secret 或任何修改功能。</p>
+          </div></div>
+          <div className="ai-access-grid">
+            <div><small>Transport</small><strong>Streamable HTTP</strong><span>/mcp</span></div>
+            <div><small>Authentication</small><strong>Cloudflare Access OAuth</strong><span>Owner only · Fail closed</span></div>
+            <div><small>Capabilities</small><strong>6 個穩定唯讀工具</strong><span>Resource／Metric Registry</span></div>
+            <div><small>Write access</small><strong className="positive-text">零</strong><span>無 create／update／delete</span></div>
+          </div>
         </section>
-
-        <AccountingPanel accounting={accounting} />
-        <CashFundingPanel ledger={cashLedger} />
-
         <section className="panel" id="upload">
           <div className="panel-heading"><div><span>DATASET UPDATE</span><h2>上傳新版交易明細</h2><p>新檔案先解析、驗證、帳務與資金核對；全部通過後才可取代 ACTIVE 版本。</p></div></div>
           <label className={`upload-zone ${busy ? 'busy' : ''}`}>
@@ -425,6 +523,7 @@ export default function App() {
           <div className="panel-heading"><div><span>ACTIVE DATASET</span><h2>目前有效交易明細</h2><p>{active ? `${active.filename} · Parser ${active.parserVersion}` : '尚未建立 ACTIVE Dataset'}</p></div></div>
           <DatasetTable data={bootstrap} />
         </section>
+        </>}
       </main>
     </div>
   )

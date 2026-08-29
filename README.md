@@ -17,6 +17,7 @@
 - React + Vite + TypeScript 使用者介面
 - Cloudflare Worker + Hono API
 - Cloudflare Access 身分標頭驗證；本機可使用 dev identity
+- `/mcp` 提供 owner-only、OAuth 保護、可稽核的 AI 唯讀語意資料層；不提供 SQL、D1 schema 或任何寫入工具。詳見 [`docs/AI_READ_ONLY_PLATFORM_V0_1.md`](docs/AI_READ_ONLY_PLATFORM_V0_1.md)。
 - D1 migration：使用者、資料集版本、交易、設定、同步 revision
 - Excel / CSV 瀏覽器端解析
 - 新舊資料 hash 比較

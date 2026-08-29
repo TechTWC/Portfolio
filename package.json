@@ -17,6 +17,8 @@
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "agents": "^0.21.0",
     "dexie": "4.4.4",
     "hono": "4.12.34",
     "jose": "6.2.3",

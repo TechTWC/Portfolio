@@ -14,7 +14,8 @@ import {
 import { compareValuationMarks } from '../src/lib/valuation-diff'
 import { transactionBindingMatches } from '../src/lib/valuation-lineage'
 import { marketDataRefreshRequestSchema } from '../src/lib/market-data-contracts'
-import { requireUser, type Bindings, type Variables } from './auth'
+import { requireExistingUser, requireUser, type Bindings, type Variables } from './auth'
+import { createPortfolioMcpHandler } from './ai/mcp'
 import { getMarketDataBootstrap } from './market-data-repository'
 import { refreshMarketData } from './market-data-service'
 import {
@@ -42,6 +43,19 @@ app.use('/api/*', async (c, next) => {
 })
 
 app.get('/api/health', (c) => c.json({ ok: true, service: 'portfolio-analyzer-cloud' }))
+app.all('/mcp', requireExistingUser, async (c) => {
+  const handler = createPortfolioMcpHandler(c.env, c.get('user'), c.req.raw)
+  const response = await handler.fetch(c.req.raw)
+  const headers = new Headers(response.headers)
+  headers.set('Cache-Control', 'no-store, no-cache, max-age=0, must-revalidate')
+  headers.set('Pragma', 'no-cache')
+  headers.set('X-Content-Type-Options', 'nosniff')
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+})
 app.use('/api/*', requireUser)
 
 app.get('/api/bootstrap', async (c) => {
