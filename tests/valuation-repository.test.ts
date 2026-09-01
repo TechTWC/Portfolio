@@ -100,6 +100,7 @@ describe('valuation repository transaction lineage', () => {
     const result = await getValuationBootstrap(
       valuationDatabase('dataset-v7', 7),
       { id: 'user-1', email: 'synthetic@example.test' },
+      new Date('2026-07-01T00:00:00Z'),
     )
 
     expect(result.freshness).toBe('STALE')
@@ -116,16 +117,33 @@ describe('valuation repository transaction lineage', () => {
     const result = await getValuationBootstrap(
       valuationDatabase('dataset-v6', 6),
       { id: 'user-1', email: 'synthetic@example.test' },
+      new Date('2026-07-01T00:00:00Z'),
     )
 
     expect(result.freshness).toBe('CURRENT')
     expect(result.valuation?.totalAssetsTwd).toBe(100)
   })
 
+  it('reports a matching valuation as stale when its valuation date is too old', async () => {
+    const result = await getValuationBootstrap(
+      valuationDatabase('dataset-v6', 6),
+      { id: 'user-1', email: 'synthetic@example.test' },
+      new Date('2026-09-01T00:00:00Z'),
+    )
+
+    expect(result).toMatchObject({
+      freshness: 'STALE',
+      freshnessReason: 'VALUATION_DATE_AGE',
+      valuationAgeDays: 63,
+      staleAfterDays: 4,
+    })
+  })
+
   it('uses marks from the captured snapshot when another tab changes active valuation state', async () => {
     const result = await getValuationBootstrap(
       valuationDatabase('dataset-v6', 6, { switchActiveSnapshotAfterMetadataRead: true }),
       { id: 'user-1', email: 'synthetic@example.test' },
+      new Date('2026-07-01T00:00:00Z'),
     )
 
     expect(result.activeSnapshot?.id).toBe('snapshot-v4')

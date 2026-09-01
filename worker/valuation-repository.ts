@@ -8,6 +8,7 @@ import {
   toValuationMark,
 } from '../src/lib/valuation-contracts'
 import { buildPointInTimeValuation } from '../src/lib/valuation'
+import { determineDateFreshness, MARKET_DATA_STALE_AFTER_DAYS } from '../src/lib/market-data-freshness'
 import { determineValuationFreshness, transactionBindingMatches } from '../src/lib/valuation-lineage'
 import { getPortfolioState, getTransactionsForDataset } from './repository'
 
@@ -113,6 +114,7 @@ async function getValuationMarksForSnapshot(
 export async function getValuationBootstrap(
   db: D1Database,
   user: User,
+  now = new Date(),
 ): Promise<ValuationBootstrapResponse> {
   const currentTransactions = await getPortfolioState(db, user.id)
   const state = await db.prepare(
@@ -125,6 +127,9 @@ export async function getValuationBootstrap(
       currentTransactionDatasetId: currentTransactions.activeDatasetId,
       currentTransactionRevision: currentTransactions.cloudRevision,
       freshness: 'NO_SNAPSHOT',
+      freshnessReason: 'NO_SNAPSHOT',
+      valuationAgeDays: null,
+      staleAfterDays: MARKET_DATA_STALE_AFTER_DAYS,
       activeSnapshot: null,
       marks: [],
       transactions: [],
@@ -146,6 +151,9 @@ export async function getValuationBootstrap(
       currentTransactionDatasetId: currentTransactions.activeDatasetId,
       currentTransactionRevision: currentTransactions.cloudRevision,
       freshness: 'NO_SNAPSHOT',
+      freshnessReason: 'NO_SNAPSHOT',
+      valuationAgeDays: null,
+      staleAfterDays: MARKET_DATA_STALE_AFTER_DAYS,
       activeSnapshot: null,
       marks: [],
       transactions: [],
@@ -163,15 +171,28 @@ export async function getValuationBootstrap(
     wallets: cashLedger.wallets,
     marks: marks.map(toValuationMark),
   })
+  const transactionFreshness = determineValuationFreshness({
+    transactionDatasetId: snapshot.transaction_dataset_id,
+    transactionRevision: snapshot.transaction_revision,
+  }, currentTransactions)
+  const dateFreshness = determineDateFreshness(snapshot.valuation_date, now)
+  const freshness = transactionFreshness === 'STALE' || dateFreshness.stale ? 'STALE' : 'CURRENT'
+  const freshnessReason = transactionFreshness === 'STALE'
+    ? 'TRANSACTION_VERSION' as const
+    : dateFreshness.stale
+      ? dateFreshness.reason === 'AGE_LIMIT_EXCEEDED'
+        ? 'VALUATION_DATE_AGE' as const
+        : 'INVALID_VALUATION_DATE' as const
+      : 'CURRENT' as const
 
   return {
     valuationRevision: state.valuation_revision,
     currentTransactionDatasetId: currentTransactions.activeDatasetId,
     currentTransactionRevision: currentTransactions.cloudRevision,
-    freshness: determineValuationFreshness({
-      transactionDatasetId: snapshot.transaction_dataset_id,
-      transactionRevision: snapshot.transaction_revision,
-    }, currentTransactions),
+    freshness,
+    freshnessReason,
+    valuationAgeDays: dateFreshness.ageDays,
+    staleAfterDays: dateFreshness.staleAfterDays,
     activeSnapshot: snapshotSummary(snapshot),
     marks,
     transactions,

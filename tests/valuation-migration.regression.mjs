@@ -228,6 +228,25 @@ try {
       (SELECT count(*) FROM pragma_foreign_key_check);
   `), 'market-run-1|600.0|0')
 
+  execute(`PRAGMA foreign_keys = ON; BEGIN; ${migration('0007_ai_read_only_platform.sql')} COMMIT;`)
+  execute(`PRAGMA foreign_keys = ON; BEGIN; ${migration('0008_market_refresh_schedule.sql')} COMMIT;`)
+  execute(`
+    INSERT INTO market_refresh_jobs (
+      id, user_id, trigger_type, scheduled_for, status, attempt_count,
+      market_revision_before, market_revision_after,
+      valuation_revision_before, valuation_revision_after, latest_bar_date, finished_at
+    ) VALUES (
+      'job-1', 'user-1', 'SCHEDULED', '2026-09-01T23:30:00.000Z', 'SUCCEEDED', 1,
+      1, 2, 1, 2, '2026-09-01', '2026-09-01 23:30:05'
+    );
+  `)
+  assert.equal(execute(`
+    SELECT
+      (SELECT status || '|' || attempt_count || '|' || latest_bar_date
+         FROM market_refresh_jobs WHERE id = 'job-1') || '|' ||
+      (SELECT count(*) FROM pragma_foreign_key_check);
+  `), 'SUCCEEDED|1|2026-09-01|0')
+
   console.log('valuation migration regression: passed')
 } finally {
   rmSync(directory, { force: true, recursive: true })

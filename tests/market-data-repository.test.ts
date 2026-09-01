@@ -34,6 +34,7 @@ function marketDatabase(): D1Database {
             activated_at: '2026-01-04 00:00:01',
           }
         }
+        if (sql.includes('FROM market_refresh_jobs')) return null
         throw new Error(`Unexpected first query: ${sql}`)
       },
       all: async () => {
@@ -85,6 +86,8 @@ describe('ACTIVE market-data series reconstruction', () => {
     const result = await getMarketDataBootstrap(
       marketDatabase(),
       { id: 'synthetic-user', email: 'synthetic@example.test' },
+      true,
+      new Date('2026-01-04T00:00:00Z'),
     )
 
     expect(result.freshness).toBe('CURRENT')
@@ -100,9 +103,25 @@ describe('ACTIVE market-data series reconstruction', () => {
       marketDatabase(),
       { id: 'synthetic-user', email: 'synthetic@example.test' },
       false,
+      new Date('2026-01-04T00:00:00Z'),
     )
     expect(result.instruments).toHaveLength(1)
     expect(result.marks).toEqual([])
+  })
+
+  it('marks an ACTIVE run stale by market date even when transaction lineage matches', async () => {
+    const result = await getMarketDataBootstrap(
+      marketDatabase(),
+      { id: 'synthetic-user', email: 'synthetic@example.test' },
+      false,
+      new Date('2026-01-10T00:00:00Z'),
+    )
+    expect(result).toMatchObject({
+      freshness: 'STALE',
+      freshnessReason: 'MARKET_DATE_AGE',
+      latestBarAgeDays: 7,
+      staleAfterDays: 4,
+    })
   })
 })
 

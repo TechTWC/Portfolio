@@ -41,14 +41,14 @@
 
 ## Phase 3 — portfolio analysis web UI
 
-狀態：帳務、估值、XIRR、歷史 NAV、TWR 與回撤核心已完成；自動行情 v1
-在 `codex/market-data-v1` 開發中，完整策略與現金流資料品質仍待後續。
+狀態：帳務、估值、XIRR、歷史 NAV、TWR、回撤與自動行情 v1 核心已完成；
+每日排程、日期型 STALE 與執行稽核已加入，完整策略與現金流資料品質仍待後續。
 
 - [x] Python golden dataset
 - [x] TypeScript cash ledger
 - [x] positions and cost basis
 - [x] Point-in-Time valuation、XIRR、歷史 NAV、TWR、年化 TWR、最大／目前回撤
-- [ ] daily equity curve（引擎與畫面既有；自動日行情接入與正式驗收中）
+- [x] daily equity curve（ACTIVE 自動日行情、日期型 STALE 與排程更新）
 - [ ] Modified Dietz
 - fees/tax/FX spread modes
 - [x] portfolio dashboard 基礎頁
@@ -72,7 +72,7 @@
 
 - audit log
 - scheduled backup/export
-- [ ] market-data proxy and cache（v1 開發中：使用者觸發、append-only series segments；多來源 fallback 與排程未完成）
+- [ ] market-data proxy and cache（v1 已有手動／排程更新、append-only series segments；多來源 fallback 尚未完成）
 - corporate actions
 - data source manifest
 - mobile UX

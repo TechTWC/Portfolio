@@ -29,6 +29,7 @@ jobs:
       CLOUDFLARE_WORKER_NAME: portfolio-analyzer
       CLOUDFLARE_ACCESS_APP_DOMAIN: portfolio-analyzer.techtwc.workers.dev
       CLOUDFLARE_ACCESS_TEAM_DOMAIN: https://techtwc.cloudflareaccess.com
+      CLOUDFLARE_MARKET_REFRESH_CRON: "30 23 * * 1-5"
 
     steps:
       - uses: actions/checkout@v4
@@ -139,6 +140,7 @@ jobs:
           echo "- Worker: \`$CLOUDFLARE_WORKER_NAME\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- D1: \`$CLOUDFLARE_D1_DATABASE_NAME\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Access: exactly one configured personal Email" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Market refresh Cron: \`$CLOUDFLARE_MARKET_REFRESH_CRON\` (UTC)" >> "$GITHUB_STEP_SUMMARY"
           echo "- URL: $DEPLOYMENT_URL" >> "$GITHUB_STEP_SUMMARY"
           echo "- Access enforcement probe: passed" >> "$GITHUB_STEP_SUMMARY"
           echo "- Authenticated Worker health check: pending manual acceptance" >> "$GITHUB_STEP_SUMMARY"

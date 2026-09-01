@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError, api } from './lib/api'
 import { buildFxCostPool } from './lib/fx-cost-pool'
 import type { MarketDataBootstrapResponse } from './lib/market-data-contracts'
+import { staleMarketDataMessage } from './lib/market-data-freshness'
 import type {
   ValuationBootstrapResponse,
   ValuationPreviewResponse,
@@ -21,8 +22,13 @@ function formatAmount(value: number | null): string {
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return '—'
+  const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value.replace(' ', 'T')}Z`
   return new Intl.DateTimeFormat('zh-TW', { dateStyle: 'medium', timeStyle: 'short' })
-    .format(new Date(`${value.replace(' ', 'T')}Z`))
+    .format(new Date(normalized))
+}
+
+function scheduledStatusLabel(status: NonNullable<MarketDataBootstrapResponse['lastScheduledRefresh']>['status']): string {
+  return ({ RUNNING: '執行中', SUCCEEDED: '成功', SKIPPED: '略過', FAILED: '失敗' })[status]
 }
 
 function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
@@ -209,7 +215,9 @@ export default function ValuationWorkspace() {
         {(message || error) && <div className={`banner ${error ? 'error' : ''}`}>{error || message}</div>}
         {bootstrap?.freshness === 'STALE' && (
           <div className="banner error">
-            此估值綁定交易 v{active?.transactionRevision ?? '—'}，目前交易已是 v{bootstrap.currentTransactionRevision}。數字仍以原交易版本重現，請重新啟用估值後再作投資決策。
+            {bootstrap.freshnessReason === 'TRANSACTION_VERSION'
+              ? `此估值綁定交易 v${active?.transactionRevision ?? '—'}，目前交易已是 v${bootstrap.currentTransactionRevision}。數字仍以原交易版本重現，請重新啟用估值後再作投資決策。`
+              : `${staleMarketDataMessage(active?.valuationDate, bootstrap.valuationAgeDays)}；目前估值不得視為最新。`}
           </div>
         )}
 
@@ -223,6 +231,16 @@ export default function ValuationWorkspace() {
                   抓取所有曾持有證券、必要匯率與 SPY 基準的 raw close；完整驗證後才更新估值。
                   首次會回補歷史日資料，後續只重抓最近區間。這是收盤資料，不是即時報價。
                 </p>
+                {marketData?.lastScheduledRefresh && (
+                  <small>
+                    最近排程：{formatDateTime(marketData.lastScheduledRefresh.scheduledFor)}／
+                    {scheduledStatusLabel(marketData.lastScheduledRefresh.status)}／
+                    嘗試 {marketData.lastScheduledRefresh.attemptCount} 次
+                    {marketData.lastScheduledRefresh.reasonMessage
+                      ? `／${marketData.lastScheduledRefresh.reasonMessage}`
+                      : ''}
+                  </small>
+                )}
               </div>
               <button
                 className="primary"
@@ -235,6 +253,13 @@ export default function ValuationWorkspace() {
 
             {marketData?.activeRun && (
               <div className="market-data-summary">
+                {marketData.freshness === 'STALE' && (
+                  <div className="banner error">
+                    {marketData.freshnessReason === 'TRANSACTION_VERSION'
+                      ? `行情綁定交易 v${marketData.activeRun.transactionRevision}，目前交易為 v${marketData.currentTransactionRevision}`
+                      : `${staleMarketDataMessage(marketData.activeRun.latestBarDate, marketData.latestBarAgeDays)}；請等待下一次排程或手動更新。`}
+                  </div>
+                )}
                 <span>
                   行情 v{marketData.marketRevision}｜{marketData.activeRun.provider}｜
                   {marketData.activeRun.earliestBarDate ?? '—'} → {marketData.activeRun.latestBarDate ?? '—'}｜
@@ -265,7 +290,7 @@ export default function ValuationWorkspace() {
               <Metric label="估值版本" value={`v${bootstrap.valuationRevision}`} hint={active ? formatDateTime(active.activatedAt) : '尚未建立'} />
               <Metric label="交易血緣" value={active ? `v${active.transactionRevision}` : '—'} hint={active?.transactionDatasetId ?? '尚未綁定'} />
               <Metric label="估值日" value={active?.valuationDate ?? '—'} hint={active?.filename ?? '尚未上傳'} />
-              <Metric label="估值狀態" value={bootstrap.freshness === 'STALE' ? 'STALE' : valuation ? (valuation.complete ? 'CURRENT' : '不完整') : '尚未估值'} hint={bootstrap.freshness === 'STALE' ? `目前交易為 v${bootstrap.currentTransactionRevision}` : valuation && !valuation.complete ? `${valuation.blockingIssueCount} 項阻擋問題` : undefined} />
+              <Metric label="估值狀態" value={bootstrap.freshness === 'STALE' ? 'STALE' : valuation ? (valuation.complete ? 'CURRENT' : '不完整') : '尚未估值'} hint={bootstrap.freshness === 'STALE' ? (bootstrap.freshnessReason === 'TRANSACTION_VERSION' ? `目前交易為 v${bootstrap.currentTransactionRevision}` : `${bootstrap.valuationAgeDays ?? '—'} 天前`) : valuation && !valuation.complete ? `${valuation.blockingIssueCount} 項阻擋問題` : undefined} />
               <Metric label="TWD 總資產" value={valuation?.totalAssetsTwd === null || valuation?.totalAssetsTwd === undefined ? '—' : formatAmount(valuation.totalAssetsTwd)} hint="市值 Snapshot，不是投資報酬" />
             </div>
 

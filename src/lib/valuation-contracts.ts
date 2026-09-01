@@ -75,6 +75,9 @@ export type ValuationBootstrapResponse = {
   currentTransactionDatasetId: string | null
   currentTransactionRevision: number
   freshness: ValuationFreshness
+  freshnessReason: 'NO_SNAPSHOT' | 'CURRENT' | 'TRANSACTION_VERSION' | 'VALUATION_DATE_AGE' | 'INVALID_VALUATION_DATE'
+  valuationAgeDays: number | null
+  staleAfterDays: number
   activeSnapshot: ValuationSnapshotSummary | null
   marks: NormalizedValuationMark[]
   transactions: StoredTransaction[]

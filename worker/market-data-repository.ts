@@ -2,9 +2,11 @@ import {
   MARKET_DATA_PROVIDER,
   type MarketDataBootstrapResponse,
   type MarketDataInstrumentSummary,
+  type MarketRefreshJobSummary,
   type MarketDataRunSummary,
   type MarketInstrumentFetchResult,
 } from '../src/lib/market-data-contracts'
+import { determineDateFreshness, MARKET_DATA_STALE_AFTER_DAYS } from '../src/lib/market-data-freshness'
 import type { NormalizedValuationMark } from '../src/lib/valuation-contracts'
 import { sha256Hex } from '../src/lib/hash'
 import { getPortfolioState } from './repository'
@@ -50,6 +52,21 @@ type SeriesRow = {
   bars_json: string
 }
 
+type RefreshJobRow = {
+  scheduled_for: string
+  status: MarketRefreshJobSummary['status']
+  attempt_count: number
+  market_revision_before: number
+  market_revision_after: number | null
+  valuation_revision_before: number
+  valuation_revision_after: number | null
+  latest_bar_date: string | null
+  reason_code: string | null
+  reason_message: string | null
+  started_at: string
+  finished_at: string | null
+}
+
 export type MarketObservationInsert = {
   instrumentType: 'SECURITY' | 'FX' | 'BENCHMARK'
   ticker: string
@@ -92,6 +109,24 @@ function instrumentSummary(row: InstrumentRow): MarketDataInstrumentSummary {
     earliestBarDate: row.earliest_bar_date,
     latestBarDate: row.latest_bar_date,
     latestRawClose: row.latest_raw_close,
+  }
+}
+
+function refreshJobSummary(row: RefreshJobRow | null): MarketRefreshJobSummary | null {
+  if (!row) return null
+  return {
+    scheduledFor: row.scheduled_for,
+    status: row.status,
+    attemptCount: row.attempt_count,
+    marketRevisionBefore: row.market_revision_before,
+    marketRevisionAfter: row.market_revision_after,
+    valuationRevisionBefore: row.valuation_revision_before,
+    valuationRevisionAfter: row.valuation_revision_after,
+    latestBarDate: row.latest_bar_date,
+    reasonCode: row.reason_code,
+    reasonMessage: row.reason_message,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
   }
 }
 
@@ -408,18 +443,32 @@ export async function getMarketDataBootstrap(
   db: D1Database,
   user: User,
   includeMarks = true,
+  now = new Date(),
 ): Promise<MarketDataBootstrapResponse> {
   const portfolio = await getPortfolioState(db, user.id)
   const state = await getMarketState(db, user.id)
+  const lastScheduledRefresh = refreshJobSummary(await db.prepare(
+    `SELECT scheduled_for, status, attempt_count, market_revision_before,
+            market_revision_after, valuation_revision_before, valuation_revision_after,
+            latest_bar_date, reason_code, reason_message, started_at, finished_at
+       FROM market_refresh_jobs
+      WHERE user_id = ?
+      ORDER BY scheduled_for DESC
+      LIMIT 1`,
+  ).bind(user.id).first<RefreshJobRow>())
   if (!state.active_run_id) {
     return {
       marketRevision: state.market_revision,
       currentTransactionDatasetId: portfolio.activeDatasetId,
       currentTransactionRevision: portfolio.cloudRevision,
       freshness: 'NO_RUN',
+      freshnessReason: 'NO_RUN',
+      latestBarAgeDays: null,
+      staleAfterDays: MARKET_DATA_STALE_AFTER_DAYS,
       activeRun: null,
       instruments: [],
       marks: [],
+      lastScheduledRefresh,
     }
   }
 
@@ -478,15 +527,29 @@ export async function getMarketDataBootstrap(
       || a.currency.localeCompare(b.currency)
       || a.ticker.localeCompare(b.ticker))
     .map((mark, index) => ({ ...mark, sourceRowNumber: index + 1 }))
+  const transactionCurrent = run.transaction_dataset_id === portfolio.activeDatasetId
+    && run.transaction_revision === portfolio.cloudRevision
+  const dateFreshness = determineDateFreshness(run.latest_bar_date, now)
+  const freshness = transactionCurrent && !dateFreshness.stale ? 'CURRENT' : 'STALE'
+  const freshnessReason = !transactionCurrent
+    ? 'TRANSACTION_VERSION' as const
+    : dateFreshness.stale
+      ? dateFreshness.reason === 'AGE_LIMIT_EXCEEDED'
+        ? 'MARKET_DATE_AGE' as const
+        : 'INVALID_MARKET_DATE' as const
+      : 'CURRENT' as const
 
   return {
     marketRevision: state.market_revision,
     currentTransactionDatasetId: portfolio.activeDatasetId,
     currentTransactionRevision: portfolio.cloudRevision,
-    freshness: run.transaction_dataset_id === portfolio.activeDatasetId
-      && run.transaction_revision === portfolio.cloudRevision ? 'CURRENT' : 'STALE',
+    freshness,
+    freshnessReason,
+    latestBarAgeDays: dateFreshness.ageDays,
+    staleAfterDays: dateFreshness.staleAfterDays,
     activeRun: runSummary(run),
     instruments: instrumentRows.results.map(instrumentSummary),
     marks,
+    lastScheduledRefresh,
   }
 }

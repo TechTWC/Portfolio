@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from './lib/api'
 import { buildCurrentPerformance } from './lib/performance'
+import { staleMarketDataMessage } from './lib/market-data-freshness'
 import type { ValuationBootstrapResponse } from './lib/valuation-contracts'
 
 function formatAmount(value: number | null): string {
@@ -64,7 +65,9 @@ export default function PerformanceWorkspace() {
       {error && <div className="banner error">{error}</div>}
       {valuation?.freshness === 'STALE' && (
         <div className="banner error">
-          XIRR 鎖定交易 v{valuation.activeSnapshot?.transactionRevision ?? '—'}；目前交易為 v{valuation.currentTransactionRevision}。結果可重現但已過期，重新啟用估值前請勿視為目前報酬。
+          {valuation.freshnessReason === 'TRANSACTION_VERSION'
+            ? `XIRR 鎖定交易 v${valuation.activeSnapshot?.transactionRevision ?? '—'}；目前交易為 v${valuation.currentTransactionRevision}。結果可重現但已過期，重新啟用估值前請勿視為目前報酬。`
+            : `${staleMarketDataMessage(valuation.activeSnapshot?.valuationDate, valuation.valuationAgeDays)}；XIRR 不得視為目前報酬。`}
         </div>
       )}
       {loading ? <div className="empty-state">正在載入交易與估值資料…</div> : (
@@ -73,7 +76,7 @@ export default function PerformanceWorkspace() {
             <Metric
               label="績效狀態"
               value={valuation?.freshness === 'STALE' ? 'STALE' : result.complete ? '完整' : '不完整'}
-              hint={valuation?.freshness === 'STALE' ? `綁定交易 v${valuation.activeSnapshot?.transactionRevision ?? '—'}` : result.complete ? '外部資金流與期末估值可年化' : `${result.blockingIssueCount} 項阻擋問題`}
+              hint={valuation?.freshness === 'STALE' ? (valuation.freshnessReason === 'TRANSACTION_VERSION' ? `綁定交易 v${valuation.activeSnapshot?.transactionRevision ?? '—'}` : `${valuation.valuationAgeDays ?? '—'} 天前`) : result.complete ? '外部資金流與期末估值可年化' : `${result.blockingIssueCount} 項阻擋問題`}
             />
             <Metric label="績效截止日" value={result.valuationDate ?? '—'} hint="使用 ACTIVE 估值日" />
             <Metric label="累計投入" value={formatAmount(result.grossContributionsTwd)} hint="CASH_IN，以 TWD 換算" />
