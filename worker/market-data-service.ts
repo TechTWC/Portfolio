@@ -228,8 +228,9 @@ export async function refreshMarketData(
   const results = await fetchInBatches(instruments, fetcher, now)
   const valuationPayload = await buildValuationPayload(request, results, fetchedAt)
   const currentValuationMarks = await getActiveValuationMarks(db, user.id)
-  const currentValuation = await getValuationBootstrap(db, user)
-  const valuationUnchanged = currentValuation.freshness === 'CURRENT'
+  const currentValuation = await getValuationBootstrap(db, user, now)
+  const valuationUnchanged = currentValuation.activeSnapshot?.transactionDatasetId === request.transactionDatasetId
+    && currentValuation.activeSnapshot.transactionRevision === request.transactionRevision
     && compareValuationMarks(currentValuationMarks, valuationPayload.marks).unchanged
 
   const accounting = buildPortfolioAccounting(transactions)
@@ -291,7 +292,7 @@ export async function refreshMarketData(
   }
 
   return {
-    market: await getMarketDataBootstrap(db, user, false),
-    valuation: await getValuationBootstrap(db, user),
+    market: await getMarketDataBootstrap(db, user, false, now),
+    valuation: await getValuationBootstrap(db, user, now),
   }
 }

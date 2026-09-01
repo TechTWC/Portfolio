@@ -138,7 +138,10 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
       const valuationIssues = analytics.valuationBundle.valuation
         ? domainIssues(analytics.valuationBundle.valuation.issues)
         : [issue('MISSING_VALUATION', '尚未建立 ACTIVE 估值 Snapshot')]
-      const dataQuality = qualityFromIssues(analytics.valuationBundle.freshness, valuationIssues)
+      const dataQuality = qualityFromIssues(analytics.valuationBundle.freshness, [
+        ...analytics.valuationBundle.freshnessIssues,
+        ...valuationIssues,
+      ])
       const valuation = analytics.currentValuation
       return {
         rows: [{
@@ -307,7 +310,10 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
         ...domainIssues(analytics.fxCost.issues),
         ...(analytics.currentValuation ? domainIssues(analytics.currentValuation.issues) : [issue('STALE_OR_MISSING_VALUATION', '目前估值不是 CURRENT')]),
       ]
-      const dataQuality = qualityFromIssues(analytics.valuationBundle.freshness, qualityIssues)
+      const dataQuality = qualityFromIssues(analytics.valuationBundle.freshness, [
+        ...analytics.valuationBundle.freshnessIssues,
+        ...qualityIssues,
+      ])
       return {
         rows: analytics.accounting.positions
           .filter((position) => Math.abs(position.quantity) > 1e-9)
@@ -364,7 +370,7 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
       const valuationIssues = bundle.valuation
         ? domainIssues(bundle.valuation.issues)
         : [issue('MISSING_VALUATION', '尚未建立 ACTIVE 估值 Snapshot')]
-      const dataQuality = qualityFromIssues(bundle.freshness, valuationIssues)
+      const dataQuality = qualityFromIssues(bundle.freshness, [...bundle.freshnessIssues, ...valuationIssues])
       const asOf = bundle.snapshot?.valuation_date ?? null
       const rows: DataRow[] = bundle.valuation ? [
         ...bundle.valuation.positions.map((position) => ({
@@ -433,7 +439,7 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
       readModel: async (context) => {
         const market = await context.session.marketBundle()
         const marketIssues = market.run ? [] : [issue('MISSING_MARKET_DATA', '尚未建立 ACTIVE 行情版本')]
-        const dataQuality = qualityFromIssues(market.freshness, marketIssues)
+        const dataQuality = qualityFromIssues(market.freshness, [...market.freshnessIssues, ...marketIssues])
         return {
           rows: market.observations
             .filter((observation) => (definition.types as readonly string[]).includes(observation.instrumentType))
@@ -489,6 +495,9 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
       analytics.fxCost.issues.forEach((item) => add('FX_COST', item.code, item.message, item.tradeDate, item.ticker || null))
       analytics.currentValuation?.issues.forEach((item) => add('VALUATION', item.code, item.message))
       analytics.performance.issues.forEach((item) => add('PERFORMANCE', item.code, item.message))
+      analytics.valuationBundle.freshnessIssues.forEach((item) => add(
+        'VALUATION', item.type, item.message, item.date ?? null, item.symbol ?? null,
+      ))
       if (analytics.valuationBundle.snapshot) {
         add(
           'PERFORMANCE',
@@ -497,11 +506,12 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
           analytics.state.earliestDate,
         )
       }
-      if (market.freshness !== 'CURRENT') {
-        add('MARKET_DATA', market.freshness, '行情資料不是 CURRENT')
-      }
+      market.freshnessIssues.forEach((item) => add(
+        'MARKET_DATA', item.type, item.message, item.date ?? null, item.symbol ?? null,
+      ))
+      if (market.freshness === 'NO_RUN') add('MARKET_DATA', 'NO_RUN', '尚未建立 ACTIVE 行情版本')
       const dataQuality: DataQuality = rows.length
-        ? { status: analytics.valuationBundle.freshness === 'STALE' ? 'STALE' : 'INCOMPLETE', issues: rows.map((row) => issue(String(row.code), String(row.message))) }
+        ? { status: analytics.valuationBundle.freshness === 'STALE' || market.freshness === 'STALE' ? 'STALE' : 'INCOMPLETE', issues: rows.map((row) => issue(String(row.code), String(row.message))) }
         : { status: 'COMPLETE', issues: [] }
       return {
         rows,
@@ -549,7 +559,7 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
     calculate: async (context) => {
       const bundle = await context.session.valuationBundle()
       const issues = bundle.valuation ? domainIssues(bundle.valuation.issues) : [issue('MISSING_VALUATION', '尚未建立 ACTIVE 估值 Snapshot')]
-      const dataQuality = qualityFromIssues(bundle.freshness, issues)
+      const dataQuality = qualityFromIssues(bundle.freshness, [...bundle.freshnessIssues, ...issues])
       const value = dataQuality.status === 'COMPLETE' ? bundle.valuation?.totalAssetsTwd ?? null : null
       const asOf = bundle.snapshot?.valuation_date ?? null
       return metricResult({
@@ -582,9 +592,11 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
           context.session.valuationBundle(),
         ])
         const issues = series ? domainIssues(series.performance.issues) : [issue('MISSING_VALUATION', '尚未建立歷史績效資料')]
-        const dataQuality: DataQuality = series?.performance.complete
-          ? { status: 'COMPLETE', issues: [] }
-          : { status: 'INCOMPLETE', issues }
+        const dataQuality: DataQuality = bundle.freshness === 'STALE'
+          ? { status: 'STALE', issues: [...bundle.freshnessIssues, ...issues] }
+          : series?.performance.complete
+            ? { status: 'COMPLETE', issues: [] }
+            : { status: 'INCOMPLETE', issues }
         const asOf = series?.performance.endDate ?? null
         return metricResult({
           metric: definition.name,
@@ -594,7 +606,7 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
           as_of: asOf,
           status: dataQuality.status,
           calculation_version: HISTORICAL_PERFORMANCE_CALCULATION_VERSION,
-          issues,
+          issues: dataQuality.issues,
           lineage: metricLineage(context, dataQuality, HISTORICAL_PERFORMANCE_CALCULATION_VERSION, asOf, {
             transactionRevision: bundle.snapshot?.transaction_revision,
           }),
@@ -614,7 +626,10 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
       const issues = domainIssues(analytics.performance.issues)
       const dataQuality = analytics.performance.complete && analytics.valuationBundle.freshness === 'CURRENT'
         ? { status: 'COMPLETE' as const, issues: [] }
-        : qualityFromIssues(analytics.valuationBundle.freshness, issues)
+        : qualityFromIssues(analytics.valuationBundle.freshness, [
+          ...analytics.valuationBundle.freshnessIssues,
+          ...issues,
+        ])
       const asOf = analytics.performance.valuationDate
       return metricResult({
         metric: 'xirr', value: dataQuality.status === 'COMPLETE' ? analytics.performance.xirr : null,
@@ -642,7 +657,10 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
           ...domainIssues(analytics.fxCost.issues),
           ...(analytics.reconciliation?.complete ? [] : [issue('INCOMPLETE_COST_RECONCILIATION', 'TWD 成本與估值尚未完整對帳')]),
         ]
-        const dataQuality = qualityFromIssues(analytics.valuationBundle.freshness, issues)
+        const dataQuality = qualityFromIssues(analytics.valuationBundle.freshness, [
+          ...analytics.valuationBundle.freshnessIssues,
+          ...issues,
+        ])
         const asOf = analytics.valuationBundle.snapshot?.valuation_date ?? null
         return metricResult({
           metric: definition.name,
@@ -666,7 +684,7 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
       const bundle = await context.session.valuationBundle()
       const valuation = bundle.valuation
       const issues = valuation ? domainIssues(valuation.issues) : [issue('MISSING_VALUATION', '尚未建立 ACTIVE 估值 Snapshot')]
-      const dataQuality = qualityFromIssues(bundle.freshness, issues)
+      const dataQuality = qualityFromIssues(bundle.freshness, [...bundle.freshnessIssues, ...issues])
       const value = dataQuality.status === 'COMPLETE' && valuation && (valuation.totalAssetsTwd ?? 0) > 0
         ? valuation.knownCashValueTwd / (valuation.totalAssetsTwd ?? 1)
         : null

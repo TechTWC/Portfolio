@@ -2,8 +2,8 @@
 
 ## Goal
 
-Provide one user-triggered action that downloads completed daily closing data, validates the
-entire portfolio universe, stores an auditable history, and activates a complete latest
+Provide scheduled and user-triggered actions that download completed daily closing data, validate the
+entire portfolio universe, store an auditable history, and activate a complete latest
 Point-in-Time valuation. A provider failure must not turn partial prices into an ACTIVE
 financial result.
 
@@ -23,8 +23,8 @@ re-downloading the whole history.
 
 ## Safety contract
 
-The refresh is initiated by the signed-in user and is all-or-nothing at the financial-result
-gate:
+The refresh is initiated by either Cloudflare Cron or the signed-in user and is all-or-nothing
+at the financial-result gate. Both triggers call the same service:
 
 1. bind the request to the exact ACTIVE transaction dataset and valuation revision;
 2. fetch every required instrument through a fixed provider host;
@@ -46,6 +46,8 @@ preserved. Market-data and valuation revisions remain separate and explicit.
 - `market_data_instruments`: per-run source symbol, timezone, range, latest raw close, and a
   compact append-only JSON series segment;
 - `market_state`: the ACTIVE run and optimistic market revision.
+- `market_refresh_jobs`: scheduled execution status, attempt count, before/after revisions and
+  a bounded failure or skip reason; it stores no prices, transactions, credentials or tokens.
 
 Historical reads merge series segments through the ACTIVE market revision and choose the latest
 observation for each instrument/date. Failed or unactivated runs therefore cannot leak into the
@@ -56,6 +58,13 @@ small number of D1 write statements.
 
 `更新最新收盤價` performs the guarded refresh. On success it shows source, date, raw close,
 per-instrument counts, market revision, transaction binding, and the new valuation revision.
+Cloudflare Cron also runs each weekday after U.S. market close. Staging and Production use
+different Workers, D1 databases, schedules and audit rows. A transient upstream 429/5xx or
+network failure is retried once; duplicate scheduled events are ignored idempotently.
+
+Market and valuation dates older than four calendar days are exposed as `STALE` with the exact
+as-of date and age. Four days deliberately permits the normal Friday-to-Tuesday weekend gap;
+the manual button remains available as an operational fallback.
 The Historical NAV workspace consumes the ACTIVE daily raw-close/FX series immediately and
 shows a TWD portfolio equity curve even when missing external CASH_IN/CASH_OUT rows still block
 XIRR or a complete TWR chain.
@@ -64,7 +73,8 @@ XIRR or a complete TWR chain.
 
 - Yahoo Finance is an adapter, not a guaranteed official market-data SLA. The provider must
   remain replaceable and its source must be shown.
-- This release is user-triggered; Cloudflare Cron scheduling is deferred.
+- A weekday Cron is an availability mechanism, not a market-calendar service. Exchange holidays
+  can produce a successful refresh whose latest completed close remains unchanged.
 - Corporate actions, delistings, ticker changes, dividends, and adjusted-close total-return
   methodology require a separate reviewed module.
 - Until that module exists, the UI labels the absolute series as a price-only TWD market-value

@@ -30,7 +30,7 @@ function baseSession(overrides: Record<string, unknown> = {}) {
       parser_version: 'valuation-v0.3', transaction_dataset_id: 'dataset-8',
       transaction_revision: 8, activated_at: '2026-01-01 00:00:00',
     },
-    marks: [], transactions: [contribution], freshness: 'CURRENT' as const,
+    marks: [], transactions: [contribution], freshness: 'CURRENT' as const, freshnessIssues: [],
     valuation: {
       valuationDate: '2026-01-01', baseCurrency: 'TWD' as const, complete: true,
       positions: [], cash: [], issues: [], blockingIssueCount: 0, futureMarkCount: 0,
@@ -55,15 +55,15 @@ function baseSession(overrides: Record<string, unknown> = {}) {
     valuationMetadata: async () => ({
       revision: valuationBundle.revision,
       snapshot: valuationBundle.snapshot,
-      freshness: valuationBundle.freshness,
+      freshness: valuationBundle.freshness, freshnessIssues: valuationBundle.freshnessIssues,
     }),
     marketBundle: async () => ({
       revision: 3, run: { dataVersion: 'market-data-v1.0.0', latestBarDate: '2026-01-01' },
-      freshness: 'CURRENT', observations: [], marks: [],
+      freshness: 'CURRENT', freshnessIssues: [], observations: [], marks: [],
     }),
     marketMetadata: async () => ({
       revision: 3, run: { dataVersion: 'market-data-v1.0.0', latestBarDate: '2026-01-01' },
-      freshness: 'CURRENT',
+      freshness: 'CURRENT', freshnessIssues: [],
     }),
     currentAnalytics: async () => currentAnalytics,
     analytics: async () => currentAnalytics,

@@ -12,6 +12,7 @@ import type { NormalizedValuationMark } from '../../src/lib/valuation-contracts'
 import { toValuationMark } from '../../src/lib/valuation-contracts'
 import { buildPointInTimeValuation } from '../../src/lib/valuation'
 import { reconcileValuationWithTwdCost } from '../../src/lib/valuation-cost-reconciliation'
+import { determineDateFreshness, staleMarketDataMessage } from '../../src/lib/market-data-freshness'
 import type { AiUser, DataQuality, DataQualityIssue } from './types'
 
 type PortfolioStateRow = {
@@ -125,20 +126,22 @@ export type ValuationBundle = {
   marks: NormalizedValuationMark[]
   transactions: StoredTransaction[]
   freshness: 'NO_SNAPSHOT' | 'CURRENT' | 'STALE'
+  freshnessIssues: DataQualityIssue[]
   valuation: ReturnType<typeof buildPointInTimeValuation> | null
 }
 
-export type ValuationMetadata = Pick<ValuationBundle, 'revision' | 'snapshot' | 'freshness'>
+export type ValuationMetadata = Pick<ValuationBundle, 'revision' | 'snapshot' | 'freshness' | 'freshnessIssues'>
 
 export type MarketBundle = {
   revision: number
   run: MarketRun | null
   freshness: 'NO_RUN' | 'CURRENT' | 'STALE'
+  freshnessIssues: DataQualityIssue[]
   observations: MarketObservation[]
   marks: NormalizedValuationMark[]
 }
 
-export type MarketMetadata = Pick<MarketBundle, 'revision' | 'run' | 'freshness'>
+export type MarketMetadata = Pick<MarketBundle, 'revision' | 'run' | 'freshness' | 'freshnessIssues'>
 
 function transactionFromRow(row: TransactionRow): StoredTransaction {
   return {
@@ -188,6 +191,7 @@ export class PortfolioReadSession {
   constructor(
     readonly db: D1Database,
     readonly user: AiUser,
+    readonly now = new Date(),
   ) {}
 
   portfolioState(): Promise<PortfolioState> {
@@ -350,6 +354,7 @@ export class PortfolioReadSession {
         revision: valuationState?.valuation_revision ?? 0,
         snapshot: null,
         freshness: 'NO_SNAPSHOT',
+        freshnessIssues: [],
       }
     }
 
@@ -364,14 +369,31 @@ export class PortfolioReadSession {
         revision: valuationState.valuation_revision,
         snapshot: null,
         freshness: 'NO_SNAPSHOT',
+        freshnessIssues: [],
       }
     }
 
+    const transactionCurrent = snapshot.transaction_dataset_id === state.activeDatasetId
+      && snapshot.transaction_revision === state.cloudRevision
+    const dateFreshness = determineDateFreshness(snapshot.valuation_date, this.now)
+    const freshnessIssues: DataQualityIssue[] = []
+    if (!transactionCurrent) {
+      freshnessIssues.push({
+        type: 'TRANSACTION_VERSION_STALE',
+        message: `估值綁定交易 v${snapshot.transaction_revision}，目前交易為 v${state.cloudRevision}`,
+      })
+    } else if (dateFreshness.stale) {
+      freshnessIssues.push({
+        type: 'VALUATION_DATE_STALE',
+        message: staleMarketDataMessage(snapshot.valuation_date, dateFreshness.ageDays),
+        date: snapshot.valuation_date,
+      })
+    }
     return {
       revision: valuationState.valuation_revision,
       snapshot,
-      freshness: snapshot.transaction_dataset_id === state.activeDatasetId
-        && snapshot.transaction_revision === state.cloudRevision ? 'CURRENT' : 'STALE',
+      freshness: transactionCurrent && !dateFreshness.stale ? 'CURRENT' : 'STALE',
+      freshnessIssues,
     }
   }
 
@@ -423,6 +445,7 @@ export class PortfolioReadSession {
         revision: marketState?.market_revision ?? 0,
         run: null,
         freshness: 'NO_RUN',
+        freshnessIssues: [],
       }
     }
 
@@ -447,11 +470,27 @@ export class PortfolioReadSession {
       activatedAt: row.activated_at,
     }
 
+    const transactionCurrent = run.transactionDatasetId === state.activeDatasetId
+      && run.transactionRevision === state.cloudRevision
+    const dateFreshness = determineDateFreshness(run.latestBarDate, this.now)
+    const freshnessIssues: DataQualityIssue[] = []
+    if (!transactionCurrent) {
+      freshnessIssues.push({
+        type: 'TRANSACTION_VERSION_STALE',
+        message: `行情綁定交易 v${run.transactionRevision}，目前交易為 v${state.cloudRevision}`,
+      })
+    } else if (dateFreshness.stale) {
+      freshnessIssues.push({
+        type: 'MARKET_DATA_DATE_STALE',
+        message: staleMarketDataMessage(run.latestBarDate, dateFreshness.ageDays),
+        date: run.latestBarDate ?? undefined,
+      })
+    }
     return {
       revision: marketState.market_revision,
       run,
-      freshness: run.transactionDatasetId === state.activeDatasetId
-        && run.transactionRevision === state.cloudRevision ? 'CURRENT' : 'STALE',
+      freshness: transactionCurrent && !dateFreshness.stale ? 'CURRENT' : 'STALE',
+      freshnessIssues,
     }
   }
 

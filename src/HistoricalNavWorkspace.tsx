@@ -6,6 +6,7 @@ import {
   type TwrPoint,
 } from './lib/time-weighted-performance'
 import type { ValuationBootstrapResponse } from './lib/valuation-contracts'
+import { staleMarketDataMessage } from './lib/market-data-freshness'
 import { toValuationMark } from './lib/valuation-contracts'
 import type { MarketDataBootstrapResponse } from './lib/market-data-contracts'
 import { drawdownMetricPresentation } from './lib/drawdown-presentation'
@@ -201,13 +202,15 @@ export default function HistoricalNavWorkspace() {
       {error && <div className="banner error">{error}</div>}
       {valuation?.freshness === 'STALE' && (
         <div className="banner error">
-          歷史績效鎖定交易 v{valuation.activeSnapshot?.transactionRevision ?? '—'}；目前交易為 v{valuation.currentTransactionRevision}。結果可重現但已過期，重新啟用估值前請勿視為目前績效。
+          {valuation.freshnessReason === 'TRANSACTION_VERSION'
+            ? `歷史績效鎖定交易 v${valuation.activeSnapshot?.transactionRevision ?? '—'}；目前交易為 v${valuation.currentTransactionRevision}。結果可重現但已過期，重新啟用估值前請勿視為目前績效。`
+            : `${staleMarketDataMessage(valuation.activeSnapshot?.valuationDate, valuation.valuationAgeDays)}；歷史曲線可供追溯，但不得視為目前績效。`}
         </div>
       )}
       {!series || !performance || !provenance ? <div className="empty-state">正在重建歷史 NAV 與績效…</div> : (
         <>
           <div className="metrics-grid">
-            <Metric label="績效狀態" value={valuation?.freshness === 'STALE' ? 'STALE' : performance.complete ? '完整' : '待補資料'} hint={valuation?.freshness === 'STALE' ? `綁定交易 v${valuation.activeSnapshot?.transactionRevision ?? '—'}` : performance.complete ? 'NAV、TWR 與回撤可追溯' : `${performance.blockingIssueCount} 項績效阻擋問題`} />
+            <Metric label="績效狀態" value={valuation?.freshness === 'STALE' ? 'STALE' : performance.complete ? '完整' : '待補資料'} hint={valuation?.freshness === 'STALE' ? (valuation.freshnessReason === 'TRANSACTION_VERSION' ? `綁定交易 v${valuation.activeSnapshot?.transactionRevision ?? '—'}` : `${valuation.valuationAgeDays ?? '—'} 天前`) : performance.complete ? 'NAV、TWR 與回撤可追溯' : `${performance.blockingIssueCount} 項績效阻擋問題`} />
             <Metric label="歷史觀察點" value={performance.points.length.toLocaleString()} hint="含期初、PRICE／FX 日期、外部資金流與 ACTIVE 估值日" />
             <Metric label="完整 NAV 點" value={series.completePointCount.toLocaleString()} />
             <Metric label="不完整 NAV 點" value={series.incompletePointCount.toLocaleString()} hint={series.incompletePointCount > 0 ? '缺少價格、匯率或帳務資料' : '所有觀察點可完整估值'} />

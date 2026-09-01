@@ -147,7 +147,7 @@ describe('AI on-demand query performance', () => {
     const fixture = productionDatabase()
     const session = new PortfolioReadSession(fixture.db, {
       id: 'production-sized-user', email: 'owner@example.test',
-    })
+    }, new Date('2026-09-01T12:00:00Z'))
     const resources = createDataRegistry()
     const metrics = createMetricRegistry()
 
@@ -162,7 +162,17 @@ describe('AI on-demand query performance', () => {
     expect(dataQuality.rows).toContainEqual(expect.objectContaining({
       domain: 'PERFORMANCE', code: 'UNSUPPORTED_TOTAL_RETURN_COVERAGE',
     }))
-    expect(nav).toMatchObject({ metric: 'nav', as_of: '2026-08-17' })
+    expect(dataQuality.rows).toContainEqual(expect.objectContaining({
+      domain: 'VALUATION', code: 'VALUATION_DATE_STALE',
+      message: '行情截至 2026-08-17，已過期 15 天',
+    }))
+    expect(nav).toMatchObject({
+      metric: 'nav', as_of: '2026-08-17', status: 'STALE', value: null,
+      issues: [expect.objectContaining({
+        type: 'VALUATION_DATE_STALE',
+        message: '行情截至 2026-08-17，已過期 15 天',
+      })],
+    })
     expect(fixture.historicalSeriesReads()).toBe(0)
   })
 
@@ -170,7 +180,7 @@ describe('AI on-demand query performance', () => {
     const fixture = productionDatabase()
     const session = new PortfolioReadSession(fixture.db, {
       id: 'read-only-user', email: 'owner@example.test',
-    })
+    }, new Date('2026-08-18T00:00:00Z'))
 
     await withinTimeout(createDataRegistry().query('portfolio_snapshot', {}, context(session)))
     await withinTimeout(createMetricRegistry().getMetric('nav', {}, context(session)))

@@ -18,6 +18,7 @@ import { requireExistingUser, requireUser, type Bindings, type Variables } from 
 import { createPortfolioMcpHandler } from './ai/mcp'
 import { getMarketDataBootstrap } from './market-data-repository'
 import { refreshMarketData } from './market-data-service'
+import { runScheduledMarketRefresh } from './market-refresh-scheduler'
 import {
   activateDataset,
   currentRevision,
@@ -33,7 +34,7 @@ import {
   getValuationBootstrap,
 } from './valuation-repository'
 
-const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
+export const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 
 app.use('/api/*', async (c, next) => {
   await next()
@@ -347,4 +348,9 @@ app.onError((error, c) => {
   return c.json({ error: '伺服器處理失敗，舊的 ACTIVE 資料未被覆蓋' }, 500)
 })
 
-export default app
+export default {
+  fetch: app.fetch,
+  scheduled(controller: ScheduledController, env: Bindings, ctx: ExecutionContext) {
+    ctx.waitUntil(runScheduledMarketRefresh(env.DB, controller.scheduledTime))
+  },
+} satisfies ExportedHandler<Bindings>

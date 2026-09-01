@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'agent/cloud-bootstrap-v0-1' || github.head_ref == 'agent/valuation-v0-3' || github.head_ref == 'agent/fx-cost-pool-v0-4' || github.head_ref == 'agent/performance-xirr-v0-5' || github.head_ref == 'agent/historical-nav-v0-6' || github.head_ref == 'agent/security-dependency-remediation-v0-7' || github.head_ref == 'agent/transaction-lineage-stale-v0-8'))
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'agent/cloud-bootstrap-v0-1' || github.head_ref == 'agent/valuation-v0-3' || github.head_ref == 'agent/fx-cost-pool-v0-4' || github.head_ref == 'agent/performance-xirr-v0-5' || github.head_ref == 'agent/historical-nav-v0-6' || github.head_ref == 'agent/security-dependency-remediation-v0-7' || github.head_ref == 'agent/transaction-lineage-stale-v0-8' || github.head_ref == 'codex/market-data-scheduler-freshness-v1'))
     name: Resolve Access, migrate and deploy
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -28,6 +28,7 @@ jobs:
       CLOUDFLARE_WORKER_NAME: portfolio-analyzer-staging
       CLOUDFLARE_ACCESS_APP_DOMAIN: portfolio-analyzer-staging.techtwc.workers.dev
       CLOUDFLARE_ACCESS_TEAM_DOMAIN: https://techtwc.cloudflareaccess.com
+      CLOUDFLARE_MARKET_REFRESH_CRON: "0 23 * * 1-5"
 
     steps:
       - uses: actions/checkout@v4
@@ -110,5 +111,6 @@ jobs:
           echo "- D1: \`$CLOUDFLARE_D1_DATABASE_NAME\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- D1 ID: \`$DATABASE_ID\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Access AUD: resolved automatically" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Market refresh Cron: \`$CLOUDFLARE_MARKET_REFRESH_CRON\` (UTC)" >> "$GITHUB_STEP_SUMMARY"
           echo "- URL: $DEPLOYMENT_URL" >> "$GITHUB_STEP_SUMMARY"
           echo "- Health check: passed" >> "$GITHUB_STEP_SUMMARY"

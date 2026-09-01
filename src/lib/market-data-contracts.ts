@@ -64,14 +64,33 @@ export type MarketDataInstrumentSummary = {
   latestRawClose: number
 }
 
+export type MarketRefreshJobSummary = {
+  scheduledFor: string
+  status: 'RUNNING' | 'SUCCEEDED' | 'SKIPPED' | 'FAILED'
+  attemptCount: number
+  marketRevisionBefore: number
+  marketRevisionAfter: number | null
+  valuationRevisionBefore: number
+  valuationRevisionAfter: number | null
+  latestBarDate: string | null
+  reasonCode: string | null
+  reasonMessage: string | null
+  startedAt: string
+  finishedAt: string | null
+}
+
 export type MarketDataBootstrapResponse = {
   marketRevision: number
   currentTransactionDatasetId: string | null
   currentTransactionRevision: number
   freshness: 'NO_RUN' | 'CURRENT' | 'STALE'
+  freshnessReason: 'NO_RUN' | 'CURRENT' | 'TRANSACTION_VERSION' | 'MARKET_DATE_AGE' | 'INVALID_MARKET_DATE'
+  latestBarAgeDays: number | null
+  staleAfterDays: number
   activeRun: MarketDataRunSummary | null
   instruments: MarketDataInstrumentSummary[]
   marks: NormalizedValuationMark[]
+  lastScheduledRefresh: MarketRefreshJobSummary | null
 }
 
 export type MarketDataRefreshResponse = {
