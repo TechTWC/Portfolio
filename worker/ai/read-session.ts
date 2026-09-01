@@ -128,6 +128,8 @@ export type ValuationBundle = {
   valuation: ReturnType<typeof buildPointInTimeValuation> | null
 }
 
+export type ValuationMetadata = Pick<ValuationBundle, 'revision' | 'snapshot' | 'freshness'>
+
 export type MarketBundle = {
   revision: number
   run: MarketRun | null
@@ -135,6 +137,8 @@ export type MarketBundle = {
   observations: MarketObservation[]
   marks: NormalizedValuationMark[]
 }
+
+export type MarketMetadata = Pick<MarketBundle, 'revision' | 'run' | 'freshness'>
 
 function transactionFromRow(row: TransactionRow): StoredTransaction {
   return {
@@ -176,7 +180,9 @@ function quality(status: DataQuality['status'], issues: DataQualityIssue[] = [])
 export class PortfolioReadSession {
   private statePromise?: Promise<PortfolioState>
   private transactionPromises = new Map<string, Promise<StoredTransaction[]>>()
+  private valuationMetadataPromise?: Promise<ValuationMetadata>
   private valuationPromise?: Promise<ValuationBundle>
+  private marketMetadataPromise?: Promise<MarketMetadata>
   private marketPromise?: Promise<MarketBundle>
 
   constructor(
@@ -208,17 +214,26 @@ export class PortfolioReadSession {
     return this.valuationPromise
   }
 
+  valuationMetadata(): Promise<ValuationMetadata> {
+    this.valuationMetadataPromise ??= this.loadValuationMetadata()
+    return this.valuationMetadataPromise
+  }
+
   marketBundle(): Promise<MarketBundle> {
     this.marketPromise ??= this.loadMarketBundle()
     return this.marketPromise
   }
 
-  async analytics() {
-    const [state, transactions, valuationBundle, marketBundle] = await Promise.all([
+  marketMetadata(): Promise<MarketMetadata> {
+    this.marketMetadataPromise ??= this.loadMarketMetadata()
+    return this.marketMetadataPromise
+  }
+
+  async currentAnalytics() {
+    const [state, transactions, valuationBundle] = await Promise.all([
       this.portfolioState(),
       this.currentTransactions(),
       this.valuationBundle(),
-      this.marketBundle(),
     ])
     const accounting = buildPortfolioAccounting(transactions)
     const cashLedger = buildCashFundingLedger(transactions)
@@ -237,7 +252,6 @@ export class PortfolioReadSession {
       terminalAssetsTwd: currentValuation?.totalAssetsTwd ?? null,
     })
 
-    const historical = await this.historicalPerformance()
     return {
       state,
       transactions,
@@ -245,10 +259,21 @@ export class PortfolioReadSession {
       cashLedger,
       fxCost,
       valuationBundle,
-      marketBundle,
       currentValuation,
       reconciliation,
       performance,
+    }
+  }
+
+  async analytics() {
+    const [current, marketBundle, historical] = await Promise.all([
+      this.currentAnalytics(),
+      this.marketBundle(),
+      this.historicalPerformance(),
+    ])
+    return {
+      ...current,
+      marketBundle,
       historical,
     }
   }
@@ -315,7 +340,7 @@ export class PortfolioReadSession {
     return rows.results.map(transactionFromRow)
   }
 
-  private async loadValuationBundle(): Promise<ValuationBundle> {
+  private async loadValuationMetadata(): Promise<ValuationMetadata> {
     const state = await this.portfolioState()
     const valuationState = await this.db.prepare(
       'SELECT active_snapshot_id, valuation_revision FROM valuation_state WHERE user_id = ?',
@@ -324,10 +349,7 @@ export class PortfolioReadSession {
       return {
         revision: valuationState?.valuation_revision ?? 0,
         snapshot: null,
-        marks: [],
-        transactions: [],
         freshness: 'NO_SNAPSHOT',
-        valuation: null,
       }
     }
 
@@ -341,9 +363,26 @@ export class PortfolioReadSession {
       return {
         revision: valuationState.valuation_revision,
         snapshot: null,
+        freshness: 'NO_SNAPSHOT',
+      }
+    }
+
+    return {
+      revision: valuationState.valuation_revision,
+      snapshot,
+      freshness: snapshot.transaction_dataset_id === state.activeDatasetId
+        && snapshot.transaction_revision === state.cloudRevision ? 'CURRENT' : 'STALE',
+    }
+  }
+
+  private async loadValuationBundle(): Promise<ValuationBundle> {
+    const metadata = await this.valuationMetadata()
+    const snapshot = metadata.snapshot
+    if (!snapshot) {
+      return {
+        ...metadata,
         marks: [],
         transactions: [],
-        freshness: 'NO_SNAPSHOT',
         valuation: null,
       }
     }
@@ -365,19 +404,16 @@ export class PortfolioReadSession {
       wallets: cashLedger.wallets,
       marks: marks.map(toValuationMark),
     })
-    const freshness = snapshot.transaction_dataset_id === state.activeDatasetId
-      && snapshot.transaction_revision === state.cloudRevision ? 'CURRENT' : 'STALE'
     return {
-      revision: valuationState.valuation_revision,
+      ...metadata,
       snapshot,
       marks,
       transactions,
-      freshness,
       valuation,
     }
   }
 
-  private async loadMarketBundle(): Promise<MarketBundle> {
+  private async loadMarketMetadata(): Promise<MarketMetadata> {
     const state = await this.portfolioState()
     const marketState = await this.db.prepare(
       'SELECT active_run_id, market_revision FROM market_state WHERE user_id = ?',
@@ -387,8 +423,6 @@ export class PortfolioReadSession {
         revision: marketState?.market_revision ?? 0,
         run: null,
         freshness: 'NO_RUN',
-        observations: [],
-        marks: [],
       }
     }
 
@@ -413,6 +447,25 @@ export class PortfolioReadSession {
       activatedAt: row.activated_at,
     }
 
+    return {
+      revision: marketState.market_revision,
+      run,
+      freshness: run.transactionDatasetId === state.activeDatasetId
+        && run.transactionRevision === state.cloudRevision ? 'CURRENT' : 'STALE',
+    }
+  }
+
+  private async loadMarketBundle(): Promise<MarketBundle> {
+    const metadata = await this.marketMetadata()
+    const run = metadata.run
+    if (!run) {
+      return {
+        ...metadata,
+        observations: [],
+        marks: [],
+      }
+    }
+
     const seriesRows = await this.db.prepare(
       `SELECT instrument.instrument_type, instrument.ticker, instrument.currency,
               instrument.provider_symbol, instrument.exchange_timezone, instrument.bars_json
@@ -422,7 +475,7 @@ export class PortfolioReadSession {
           AND run.status IN ('ACTIVE', 'ARCHIVED')
         ORDER BY run.revision, instrument.instrument_type,
                  instrument.currency, instrument.ticker`,
-    ).bind(this.user.id, marketState.market_revision).all<MarketSeriesRow>()
+    ).bind(this.user.id, metadata.revision).all<MarketSeriesRow>()
 
     const observationByKey = new Map<string, MarketObservation>()
     for (const series of seriesRows.results) {
@@ -461,10 +514,8 @@ export class PortfolioReadSession {
       rowHash: '0'.repeat(64),
     }))
     return {
-      revision: marketState.market_revision,
+      ...metadata,
       run,
-      freshness: run.transactionDatasetId === state.activeDatasetId
-        && run.transactionRevision === state.cloudRevision ? 'CURRENT' : 'STALE',
       observations,
       marks,
     }
