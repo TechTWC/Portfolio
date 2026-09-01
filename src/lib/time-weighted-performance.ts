@@ -8,6 +8,7 @@ import {
 const DAY_MS = 86_400_000
 const EPSILON = 1e-9
 export const HISTORICAL_PERFORMANCE_CALCULATION_VERSION = 'historical-performance-v0.6'
+export const UNSUPPORTED_TOTAL_RETURN_COVERAGE_MESSAGE = '目前尚未納入股息、股票／ETF 分割及其他公司行動；市值曲線可供檢視，但不能宣稱為完整 TWR 或回撤'
 
 export type HistoricalPerformanceIssueCode =
   | 'INSUFFICIENT_OBSERVATIONS'
@@ -382,7 +383,7 @@ export function buildHistoricalPerformanceSeries(
   if (totalReturnCoverage === 'PRICE_ONLY') {
     const coverageIssue: HistoricalPerformanceIssue = {
       code: 'UNSUPPORTED_TOTAL_RETURN_COVERAGE',
-      message: '目前尚未納入股息、股票／ETF 分割及其他公司行動；市值曲線可供檢視，但不能宣稱為完整 TWR 或回撤',
+      message: UNSUPPORTED_TOTAL_RETURN_COVERAGE_MESSAGE,
       dates: observationDates,
     }
     performance = {

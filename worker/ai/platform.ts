@@ -3,6 +3,7 @@ import { buildCashFundingLedger } from '../../src/lib/cash-ledger'
 import { buildFxCostPool } from '../../src/lib/fx-cost-pool'
 import {
   HISTORICAL_PERFORMANCE_CALCULATION_VERSION,
+  UNSUPPORTED_TOTAL_RETURN_COVERAGE_MESSAGE,
   type HistoricalPerformanceSeries,
 } from '../../src/lib/time-weighted-performance'
 import { ResourceRegistry, MetricRegistry, type ResourceRegistration } from './registry'
@@ -74,8 +75,8 @@ async function lineage(
 ): Promise<DataLineage> {
   const [state, valuation, market] = await Promise.all([
     context.session.portfolioState(),
-    context.session.valuationBundle(),
-    context.session.marketBundle(),
+    context.session.valuationMetadata(),
+    context.session.marketMetadata(),
   ])
   return {
     as_of: options.asOf ?? valuation.snapshot?.valuation_date ?? market.run?.latestBarDate ?? null,
@@ -133,7 +134,7 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
     allowedSort: ['as_of'],
     applyFilters: (rows, filters) => filterRows(rows, filters, { as_of: 'as_of' }),
     readModel: async (context): Promise<ResourceReadResult> => {
-      const analytics = await context.session.analytics()
+      const analytics = await context.session.currentAnalytics()
       const valuationIssues = analytics.valuationBundle.valuation
         ? domainIssues(analytics.valuationBundle.valuation.issues)
         : [issue('MISSING_VALUATION', '尚未建立 ACTIVE 估值 Snapshot')]
@@ -291,7 +292,7 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
       as_of: 'as_of', symbol: 'symbol', currency: 'currency',
     }),
     readModel: async (context) => {
-      const analytics = await context.session.analytics()
+      const analytics = await context.session.currentAnalytics()
       const valuationByKey = new Map(analytics.currentValuation?.positions.map((position) => [
         `${position.ticker}\u0000${position.currency}`, position,
       ]) ?? [])
@@ -475,7 +476,10 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
       domain: 'domain', code: 'code', symbol: 'symbol',
     }, 'date'),
     readModel: async (context) => {
-      const analytics = await context.session.analytics()
+      const [analytics, market] = await Promise.all([
+        context.session.currentAnalytics(),
+        context.session.marketMetadata(),
+      ])
       const rows: DataRow[] = []
       const add = (domain: string, code: string, message: string, date: string | null = null, symbol: string | null = null) => {
         rows.push({ domain, code, message, severity: 'BLOCKING', date, symbol })
@@ -485,9 +489,16 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
       analytics.fxCost.issues.forEach((item) => add('FX_COST', item.code, item.message, item.tradeDate, item.ticker || null))
       analytics.currentValuation?.issues.forEach((item) => add('VALUATION', item.code, item.message))
       analytics.performance.issues.forEach((item) => add('PERFORMANCE', item.code, item.message))
-      analytics.historical?.performance.issues.forEach((item) => add('PERFORMANCE', item.code, item.message, item.dates[0] ?? null))
-      if (analytics.marketBundle.freshness !== 'CURRENT') {
-        add('MARKET_DATA', analytics.marketBundle.freshness, '行情資料不是 CURRENT')
+      if (analytics.valuationBundle.snapshot) {
+        add(
+          'PERFORMANCE',
+          'UNSUPPORTED_TOTAL_RETURN_COVERAGE',
+          UNSUPPORTED_TOTAL_RETURN_COVERAGE_MESSAGE,
+          analytics.state.earliestDate,
+        )
+      }
+      if (market.freshness !== 'CURRENT') {
+        add('MARKET_DATA', market.freshness, '行情資料不是 CURRENT')
       }
       const dataQuality: DataQuality = rows.length
         ? { status: analytics.valuationBundle.freshness === 'STALE' ? 'STALE' : 'INCOMPLETE', issues: rows.map((row) => issue(String(row.code), String(row.message))) }
@@ -599,7 +610,7 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
     calculationVersion: XIRR_CALCULATION_VERSION,
     allowedParameters: [],
     calculate: async (context) => {
-      const analytics = await context.session.analytics()
+      const analytics = await context.session.currentAnalytics()
       const issues = domainIssues(analytics.performance.issues)
       const dataQuality = analytics.performance.complete && analytics.valuationBundle.freshness === 'CURRENT'
         ? { status: 'COMPLETE' as const, issues: [] }
@@ -616,8 +627,8 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
   })
 
   for (const definition of [
-    { name: 'realized_pl', pick: (analytics: Awaited<ReturnType<PortfolioReadSession['analytics']>>) => analytics.reconciliation?.totalRealizedPnlTwd ?? null },
-    { name: 'unrealized_pl', pick: (analytics: Awaited<ReturnType<PortfolioReadSession['analytics']>>) => analytics.reconciliation?.totalUnrealizedPnlTwd ?? null },
+    { name: 'realized_pl', pick: (analytics: Awaited<ReturnType<PortfolioReadSession['currentAnalytics']>>) => analytics.reconciliation?.totalRealizedPnlTwd ?? null },
+    { name: 'unrealized_pl', pick: (analytics: Awaited<ReturnType<PortfolioReadSession['currentAnalytics']>>) => analytics.reconciliation?.totalUnrealizedPnlTwd ?? null },
   ] as const) {
     registry.register({
       name: definition.name,
@@ -626,7 +637,7 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
       calculationVersion: FX_COST_CALCULATION_VERSION,
       allowedParameters: [],
       calculate: async (context) => {
-        const analytics = await context.session.analytics()
+        const analytics = await context.session.currentAnalytics()
         const issues = [
           ...domainIssues(analytics.fxCost.issues),
           ...(analytics.reconciliation?.complete ? [] : [issue('INCOMPLETE_COST_RECONCILIATION', 'TWD 成本與估值尚未完整對帳')]),
