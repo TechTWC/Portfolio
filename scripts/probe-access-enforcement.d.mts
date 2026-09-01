@@ -1,6 +1,6 @@
 export function assertAccessEnforced(
   response: Response,
-  options: { deploymentUrl: string; teamDomain: string },
+  options: { deploymentUrl: string; teamDomain: string; responseBody?: unknown },
 ): string
 
 export function probeAccessEnforcement(options: {

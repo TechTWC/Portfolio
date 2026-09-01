@@ -29,12 +29,23 @@ function oauthChallenge(response, deploymentUrl) {
     && metadataUrl.pathname === '/.well-known/cloudflare-access-protected-resource/'
 }
 
-export function assertAccessEnforced(response, { deploymentUrl, teamDomain }) {
+function managedOauthError(response, responseBody, deploymentUrl) {
+  if (response.status !== 401 || !responseBody || typeof responseBody !== 'object') return false
+  const expectedMetadata = new URL(
+    '/.well-known/cloudflare-access-protected-resource/api/health',
+    deploymentUrl,
+  ).href
+  return responseBody.error === 'invalid_token'
+    && responseBody.resource_metadata === expectedMetadata
+}
+
+export function assertAccessEnforced(response, { deploymentUrl, teamDomain, responseBody = null }) {
   const deployment = requiredUrl(deploymentUrl, 'DEPLOYMENT_URL')
   const team = requiredUrl(teamDomain, 'CLOUDFLARE_ACCESS_TEAM_DOMAIN')
 
   if (accessRedirect(response, team)) return `Access login redirect (${response.status})`
   if (oauthChallenge(response, deployment)) return 'Access OAuth challenge (401)'
+  if (managedOauthError(response, responseBody, deployment)) return 'Access Managed OAuth error (401)'
 
   throw new Error(`Response does not prove Cloudflare Access enforcement (HTTP ${response.status}).`)
 }
@@ -56,9 +67,19 @@ export async function probeAccessEnforcement({
         headers: { accept: 'application/json' },
         redirect: 'manual',
       })
+      let responseBody = null
+      if (response.status === 401) {
+        const text = await response.text()
+        try {
+          responseBody = JSON.parse(text)
+        } catch {
+          responseBody = null
+        }
+      }
       const result = assertAccessEnforced(response, {
         deploymentUrl: baseUrl.href,
         teamDomain,
+        responseBody,
       })
       console.log(`Access enforcement probe passed: ${result}.`)
       return

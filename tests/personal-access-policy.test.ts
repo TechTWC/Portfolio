@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { assertPersonalPolicy, verifyPersonalAccess } from '../scripts/verify-personal-access.mjs'
-import { assertAccessEnforced } from '../scripts/probe-access-enforcement.mjs'
+import { assertAccessEnforced, probeAccessEnforcement } from '../scripts/probe-access-enforcement.mjs'
 
 const personalEmail = 'owner@example.com'
 const productionWorkflow = readFileSync('.github/workflows/deploy-personal-production.yml', 'utf8')
@@ -212,6 +212,40 @@ describe('Personal Production Access enforcement probe', () => {
     })
     expect(assertAccessEnforced(valid, options)).toMatch(/OAuth challenge/)
     expect(() => assertAccessEnforced(new Response(null, { status: 401 }), options)).toThrow(/does not prove/)
+  })
+
+  it('accepts the Managed OAuth invalid_token body returned for the protected health resource', async () => {
+    const responseBody = {
+      error: 'invalid_token',
+      error_description: 'Missing or invalid access token',
+      resource_metadata: 'https://portfolio-analyzer.techtwc.workers.dev/.well-known/cloudflare-access-protected-resource/api/health',
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify(responseBody), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    }))
+
+    await expect(probeAccessEnforcement({
+      ...options,
+      fetchImpl,
+      attempts: 1,
+      retryDelayMs: 0,
+    })).resolves.toBeUndefined()
+    expect(fetchImpl).toHaveBeenCalledWith(
+      new URL('/api/health', options.deploymentUrl),
+      expect.objectContaining({ redirect: 'manual' }),
+    )
+  })
+
+  it('rejects Managed OAuth JSON that points outside the protected deployment', () => {
+    const response = new Response(null, { status: 401 })
+    expect(() => assertAccessEnforced(response, {
+      ...options,
+      responseBody: {
+        error: 'invalid_token',
+        resource_metadata: 'https://attacker.example/.well-known/cloudflare-access-protected-resource/api/health',
+      },
+    })).toThrow(/does not prove/)
   })
 
   it('rejects a generic Cloudflare 403 because edge markers do not prove Access', () => {
