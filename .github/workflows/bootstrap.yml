@@ -1,0 +1,54 @@
+name: Bootstrap repository
+
+on:
+  push:
+    branches:
+      - agent/bootstrap-cloud-portfolio
+    paths:
+      - '.bootstrap/**'
+      - '.github/workflows/bootstrap.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.bootstrap/**'
+      - '.github/workflows/bootstrap.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  unpack:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/bootstrap-cloud-portfolio
+
+      - name: Reconstruct project
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .bootstrap/chunk-* > /tmp/portfolio.b64
+          base64 --decode /tmp/portfolio.b64 > /tmp/portfolio.tar.gz
+          tar -tzf /tmp/portfolio.tar.gz >/dev/null
+          tar -xzf /tmp/portfolio.tar.gz -C .
+          rm -rf .bootstrap
+          rm -f .github/workflows/bootstrap.yml
+
+      - name: Commit project
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No bootstrap changes to commit."
+            exit 0
+          fi
+          git commit -m "feat: bootstrap cloud portfolio analyzer"
+          git push origin HEAD:agent/bootstrap-cloud-portfolio
