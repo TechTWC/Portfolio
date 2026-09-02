@@ -28,6 +28,24 @@ const VALUATION_CALCULATION_VERSION = 'point-in-time-valuation-v0.3'
 const XIRR_CALCULATION_VERSION = 'money-weighted-performance-v0.5'
 const FX_COST_CALCULATION_VERSION = 'fx-cost-pool-v0.4'
 
+const SECURITY_ESTIMATE_LIMITATIONS: DataQualityIssue[] = [
+  issue(
+    'ESTIMATED_SECURITY_RETURN_SCOPE',
+    '這是證券投入效率的明示推估，不是正式帳戶總報酬；未觀察的帳戶現金不納入期末價值',
+    { severity: 'WARNING' },
+  ),
+  issue(
+    'UNRECORDED_DISTRIBUTIONS_AND_CORPORATE_ACTIONS',
+    '未記錄的股息、股票／ETF 分割及其他公司行動不會自動納入，可能使推估結果產生偏差',
+    { severity: 'WARNING' },
+  ),
+  issue(
+    'TRADE_DATE_AND_RECORDED_FX_ASSUMPTIONS',
+    '交割日先以交易日代替，外幣交易使用交易列記錄的匯率；若該匯率不是實際歷史匯率，結果仍屬推估',
+    { severity: 'WARNING' },
+  ),
+]
+
 type Context = AiRequestContext<PortfolioReadSession>
 
 function field(
@@ -105,7 +123,7 @@ function resource(
     dateSemantics: input.dateSemantics ?? 'ISO 8601 calendar date (YYYY-MM-DD)',
     currencySemantics: input.currencySemantics
       ?? 'Amounts are in row.currency unless the field name or unit explicitly says TWD',
-    dataQualitySemantics: 'COMPLETE is usable, INCOMPLETE must not be treated as complete, STALE is reproducible but not current',
+    dataQualitySemantics: 'COMPLETE is fully usable, ESTIMATED is usable only within disclosed assumptions, INCOMPLETE must not be treated as complete, STALE is reproducible but not current',
     lineageAvailability: 'transaction, valuation, market-data and calculation versions are returned with every result',
     ...input,
   }
@@ -113,6 +131,17 @@ function resource(
 
 function completeOrIncomplete(issues: DataQualityIssue[]): DataQuality {
   return { status: issues.length ? 'INCOMPLETE' : 'COMPLETE', issues }
+}
+
+function estimatedSecurityQuality(
+  calculationComplete: boolean,
+  freshness: 'CURRENT' | 'STALE' | 'NO_SNAPSHOT' | 'NO_RUN',
+  blockingIssues: DataQualityIssue[],
+): DataQuality {
+  if (calculationComplete && freshness === 'CURRENT') {
+    return { status: 'ESTIMATED', issues: SECURITY_ESTIMATE_LIMITATIONS }
+  }
+  return qualityFromIssues(freshness, blockingIssues)
 }
 
 export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
@@ -291,12 +320,11 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
     readModel: async (context) => {
       const analytics = await context.session.currentAnalytics()
       const issues = domainIssues(analytics.securityPerformance.issues)
-      const dataQuality = analytics.securityPerformance.complete && analytics.valuationBundle.freshness === 'CURRENT'
-        ? { status: 'COMPLETE' as const, issues: [] }
-        : qualityFromIssues(analytics.valuationBundle.freshness, [
-          ...analytics.valuationBundle.freshnessIssues,
-          ...issues,
-        ])
+      const dataQuality = estimatedSecurityQuality(
+        analytics.securityPerformance.complete,
+        analytics.valuationBundle.freshness,
+        [...analytics.valuationBundle.freshnessIssues, ...issues],
+      )
       return {
         rows: analytics.securityPerformance.securityCashFlows.map((flow) => ({
           date: flow.date,
@@ -669,16 +697,15 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
     calculate: async (context) => {
       const analytics = await context.session.currentAnalytics()
       const issues = domainIssues(analytics.securityPerformance.issues)
-      const dataQuality = analytics.securityPerformance.complete && analytics.valuationBundle.freshness === 'CURRENT'
-        ? { status: 'COMPLETE' as const, issues: [] }
-        : qualityFromIssues(analytics.valuationBundle.freshness, [
-          ...analytics.valuationBundle.freshnessIssues,
-          ...issues,
-        ])
+      const dataQuality = estimatedSecurityQuality(
+        analytics.securityPerformance.complete,
+        analytics.valuationBundle.freshness,
+        [...analytics.valuationBundle.freshnessIssues, ...issues],
+      )
       const asOf = analytics.securityPerformance.valuationDate
       return metricResult({
         metric: 'security_xirr',
-        value: dataQuality.status === 'COMPLETE' ? analytics.securityPerformance.xirr : null,
+        value: dataQuality.status === 'ESTIMATED' ? analytics.securityPerformance.xirr : null,
         unit: 'decimal',
         period: { from: analytics.securityPerformance.securityCashFlows[0]?.date ?? null, to: asOf },
         as_of: asOf,

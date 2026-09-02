@@ -142,10 +142,17 @@ describe('AI official Metric golden parity', () => {
 
     expect(estimated).toMatchObject({
       metric: 'security_xirr',
-      status: 'COMPLETE',
+      status: 'ESTIMATED',
       calculation_version: 'estimated-security-investment-xirr-v0.1',
     })
     expect(estimated.value).toBeCloseTo(0.1, 9)
+    expect(estimated.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'ESTIMATED_SECURITY_RETURN_SCOPE', severity: 'WARNING' }),
+      expect.objectContaining({
+        type: 'UNRECORDED_DISTRIBUTIONS_AND_CORPORATE_ACTIONS', severity: 'WARNING',
+      }),
+      expect.objectContaining({ type: 'TRADE_DATE_AND_RECORDED_FX_ASSUMPTIONS', severity: 'WARNING' }),
+    ]))
     expect(official.value).toBeCloseTo(0.1, 9)
     expect(registry.list().find((metric) => metric.name === 'xirr')?.description)
       .toContain('Official')
@@ -158,7 +165,10 @@ describe('AI official Metric golden parity', () => {
       sort: { field: 'date', direction: 'asc' },
     }, context())
 
-    expect(result.data_quality.status).toBe('COMPLETE')
+    expect(result.data_quality.status).toBe('ESTIMATED')
+    expect(result.data_quality.issues).toContainEqual(expect.objectContaining({
+      type: 'UNRECORDED_DISTRIBUTIONS_AND_CORPORATE_ACTIONS', severity: 'WARNING',
+    }))
     expect(result.lineage.calculation_version).toBe('estimated-security-investment-xirr-v0.1')
     expect(result.rows).toEqual([
       expect.objectContaining({

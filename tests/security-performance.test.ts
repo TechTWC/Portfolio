@@ -105,6 +105,27 @@ describe('estimated security investment XIRR', () => {
     expect(result.xirr).toBeCloseTo(0.25, 9)
   })
 
+  it('locks the anonymized synthetic golden rate verified against the supplied workbook', () => {
+    const result = calculate([
+      row({ tradeDate: '2025-09-01', amountForeign: 1_000, price: 1_000 }),
+      row({ sourceRowNumber: 3, tradeDate: '2026-01-15', amountForeign: 600, price: 600 }),
+      row({
+        sourceRowNumber: 4,
+        tradeDate: '2026-05-20',
+        quantity: -1,
+        amountForeign: 250,
+        price: 250,
+      }),
+    ], {
+      valuationDate: '2026-09-01',
+      terminalPositionValueTwd: 1_787.1596659049292,
+    })
+
+    expect(result.complete).toBe(true)
+    expect(result.securityCashFlows).toHaveLength(4)
+    expect(result.xirr).toBeCloseTo(0.3384104923, 9)
+  })
+
   it('blocks a foreign security transaction without a usable trade-date FX rate', () => {
     const result = calculate([row({ ticker: 'VOO', currency: 'USD', fxRate: null })])
 
