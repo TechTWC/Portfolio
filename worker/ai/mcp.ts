@@ -103,7 +103,7 @@ export function createPortfolioMcpHandler(env: Bindings, user: AiUser, request: 
     )))
 
     server.registerTool('list_metrics', {
-      title: 'List official portfolio metrics',
+      title: 'List portfolio metrics',
       description: 'Discover the registered financial metrics calculated by Portfolio Analyzer domain services.',
       inputSchema: z.object({}),
       annotations: readOnlyAnnotations,
@@ -113,7 +113,7 @@ export function createPortfolioMcpHandler(env: Bindings, user: AiUser, request: 
     })))
 
     server.registerTool('get_metric', {
-      title: 'Get an official portfolio metric',
+      title: 'Get a portfolio metric',
       description: 'Return one registered metric from the existing Portfolio Analyzer calculation services, including status, version and lineage.',
       inputSchema: z.object({
         metric: z.string().min(1).max(80),

@@ -4,6 +4,7 @@ import type { StoredTransaction } from '../../src/lib/contracts'
 import { buildFxCostPool } from '../../src/lib/fx-cost-pool'
 import { deriveHistoricalNavDates } from '../../src/lib/historical-nav-schedule'
 import { buildCurrentPerformance } from '../../src/lib/performance'
+import { buildSecurityInvestmentPerformance } from '../../src/lib/security-performance'
 import {
   buildHistoricalPerformanceSeries,
   type HistoricalPerformanceSeries,
@@ -255,6 +256,12 @@ export class PortfolioReadSession {
       valuationComplete: currentValuation?.complete ?? false,
       terminalAssetsTwd: currentValuation?.totalAssetsTwd ?? null,
     })
+    const securityPerformance = buildSecurityInvestmentPerformance({
+      transactions,
+      valuationDate: currentValuation ? valuationBundle.snapshot?.valuation_date ?? null : null,
+      valuationComplete: currentValuation?.complete ?? false,
+      terminalPositionValueTwd: currentValuation?.knownPositionValueTwd ?? null,
+    })
 
     return {
       state,
@@ -266,6 +273,7 @@ export class PortfolioReadSession {
       currentValuation,
       reconciliation,
       performance,
+      securityPerformance,
     }
   }
 

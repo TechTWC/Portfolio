@@ -10,6 +10,7 @@ describe('AI semantic platform catalog', () => {
       'market_prices',
       'portfolio_snapshot',
       'positions',
+      'security_cash_flows',
       'transactions',
       'valuations',
     ])
@@ -21,6 +22,7 @@ describe('AI semantic platform catalog', () => {
       'max_drawdown',
       'nav',
       'realized_pl',
+      'security_xirr',
       'twr',
       'unrealized_pl',
       'xirr',
