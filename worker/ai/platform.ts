@@ -1,6 +1,7 @@
 import { buildPortfolioAccounting } from '../../src/lib/accounting'
 import { buildCashFundingLedger } from '../../src/lib/cash-ledger'
 import { buildFxCostPool } from '../../src/lib/fx-cost-pool'
+import { SECURITY_INVESTMENT_CALCULATION_VERSION } from '../../src/lib/security-performance'
 import {
   HISTORICAL_PERFORMANCE_CALCULATION_VERSION,
   UNSUPPORTED_TOTAL_RETURN_COVERAGE_MESSAGE,
@@ -26,6 +27,24 @@ const RESOURCE_VERSION = '1.0'
 const VALUATION_CALCULATION_VERSION = 'point-in-time-valuation-v0.3'
 const XIRR_CALCULATION_VERSION = 'money-weighted-performance-v0.5'
 const FX_COST_CALCULATION_VERSION = 'fx-cost-pool-v0.4'
+
+const SECURITY_ESTIMATE_LIMITATIONS: DataQualityIssue[] = [
+  issue(
+    'ESTIMATED_SECURITY_RETURN_SCOPE',
+    '這是證券投入效率的明示推估，不是正式帳戶總報酬；未觀察的帳戶現金不納入期末價值',
+    { severity: 'WARNING' },
+  ),
+  issue(
+    'UNRECORDED_DISTRIBUTIONS_AND_CORPORATE_ACTIONS',
+    '未記錄的股息、股票／ETF 分割及其他公司行動不會自動納入，可能使推估結果產生偏差',
+    { severity: 'WARNING' },
+  ),
+  issue(
+    'TRADE_DATE_AND_RECORDED_FX_ASSUMPTIONS',
+    '交割日先以交易日代替，外幣交易使用交易列記錄的匯率；若該匯率不是實際歷史匯率，結果仍屬推估',
+    { severity: 'WARNING' },
+  ),
+]
 
 type Context = AiRequestContext<PortfolioReadSession>
 
@@ -104,7 +123,7 @@ function resource(
     dateSemantics: input.dateSemantics ?? 'ISO 8601 calendar date (YYYY-MM-DD)',
     currencySemantics: input.currencySemantics
       ?? 'Amounts are in row.currency unless the field name or unit explicitly says TWD',
-    dataQualitySemantics: 'COMPLETE is usable, INCOMPLETE must not be treated as complete, STALE is reproducible but not current',
+    dataQualitySemantics: 'COMPLETE is fully usable, ESTIMATED is usable only within disclosed assumptions, INCOMPLETE must not be treated as complete, STALE is reproducible but not current',
     lineageAvailability: 'transaction, valuation, market-data and calculation versions are returned with every result',
     ...input,
   }
@@ -112,6 +131,17 @@ function resource(
 
 function completeOrIncomplete(issues: DataQualityIssue[]): DataQuality {
   return { status: issues.length ? 'INCOMPLETE' : 'COMPLETE', issues }
+}
+
+function estimatedSecurityQuality(
+  calculationComplete: boolean,
+  freshness: 'CURRENT' | 'STALE' | 'NO_SNAPSHOT' | 'NO_RUN',
+  blockingIssues: DataQualityIssue[],
+): DataQuality {
+  if (calculationComplete && freshness === 'CURRENT') {
+    return { status: 'ESTIMATED', issues: SECURITY_ESTIMATE_LIMITATIONS }
+  }
+  return qualityFromIssues(freshness, blockingIssues)
 }
 
 export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
@@ -268,6 +298,48 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
           asOf: state.latestDate,
           resourceVersion: RESOURCE_VERSION,
           calculationVersion: XIRR_CALCULATION_VERSION,
+        }),
+      }
+    },
+  }))
+
+  registry.register(resource({
+    name: 'security_cash_flows',
+    description: 'Estimated TWD security cash flows used by security_xirr; purchases are negative, net sale proceeds and terminal open-position value are positive',
+    fields: [
+      field('date', 'date', 'Trade date or ACTIVE valuation date', { date_semantics: 'Trade date is used as the estimated settlement date' }),
+      field('type', 'enum', 'Estimated security cash-flow type', { enum_values: ['PURCHASE', 'SALE', 'TERMINAL_POSITION_VALUE'] }),
+      field('amount_twd', 'number', 'Absolute estimated cash-flow amount in TWD', { unit: 'TWD', currency: 'TWD' }),
+      field('signed_amount_twd', 'number', 'Signed estimated XIRR cash flow in TWD', { unit: 'TWD', currency: 'TWD' }),
+      field('source_row_numbers', 'string', 'Comma-separated source transaction rows; blank for terminal valuation'),
+      field('source', 'enum', 'Cash-flow source', { enum_values: ['TRANSACTION', 'ACTIVE_POSITION_VALUATION'] }),
+    ],
+    allowedFilters: ['from', 'to', 'type'],
+    allowedSort: ['date', 'type'],
+    applyFilters: (rows, filters) => filterRows(rows, filters, { type: 'type' }, 'date'),
+    readModel: async (context) => {
+      const analytics = await context.session.currentAnalytics()
+      const issues = domainIssues(analytics.securityPerformance.issues)
+      const dataQuality = estimatedSecurityQuality(
+        analytics.securityPerformance.complete,
+        analytics.valuationBundle.freshness,
+        [...analytics.valuationBundle.freshnessIssues, ...issues],
+      )
+      return {
+        rows: analytics.securityPerformance.securityCashFlows.map((flow) => ({
+          date: flow.date,
+          type: flow.kind,
+          amount_twd: flow.amountTwd,
+          signed_amount_twd: flow.signedAmountTwd,
+          source_row_numbers: flow.sourceRowNumbers.join(','),
+          source: flow.sourceRowNumbers.length > 0 ? 'TRANSACTION' : 'ACTIVE_POSITION_VALUATION',
+        })),
+        dataQuality,
+        lineage: await lineage(context, dataQuality, {
+          asOf: analytics.securityPerformance.valuationDate,
+          resourceVersion: RESOURCE_VERSION,
+          calculationVersion: SECURITY_INVESTMENT_CALCULATION_VERSION,
+          transactionRevision: analytics.valuationBundle.snapshot?.transaction_revision,
         }),
       }
     },
@@ -469,7 +541,7 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
     name: 'data_quality',
     description: 'Current blocking and freshness issues across accounting, cash, FX, valuation and performance',
     fields: [
-      field('domain', 'enum', 'Affected business domain', { enum_values: ['TRANSACTIONS', 'CASH', 'FX_COST', 'VALUATION', 'PERFORMANCE', 'MARKET_DATA'] }),
+      field('domain', 'enum', 'Affected business domain', { enum_values: ['TRANSACTIONS', 'CASH', 'FX_COST', 'VALUATION', 'PERFORMANCE', 'SECURITY_PERFORMANCE', 'MARKET_DATA'] }),
       field('code', 'string', 'Stable issue code'),
       field('message', 'string', 'Human-readable issue explanation'),
       field('severity', 'enum', 'Issue severity', { enum_values: ['BLOCKING'] }),
@@ -495,6 +567,7 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
       analytics.fxCost.issues.forEach((item) => add('FX_COST', item.code, item.message, item.tradeDate, item.ticker || null))
       analytics.currentValuation?.issues.forEach((item) => add('VALUATION', item.code, item.message))
       analytics.performance.issues.forEach((item) => add('PERFORMANCE', item.code, item.message))
+      analytics.securityPerformance.issues.forEach((item) => add('SECURITY_PERFORMANCE', item.code, item.message))
       analytics.valuationBundle.freshnessIssues.forEach((item) => add(
         'VALUATION', item.type, item.message, item.date ?? null, item.symbol ?? null,
       ))
@@ -614,6 +687,35 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
       },
     })
   }
+
+  registry.register({
+    name: 'security_xirr',
+    description: 'Estimated money-weighted annualized return on security capital using trade-date purchases, net sale proceeds, and terminal open-position market value; excludes unrecorded dividends and corporate actions',
+    unit: 'decimal',
+    calculationVersion: SECURITY_INVESTMENT_CALCULATION_VERSION,
+    allowedParameters: [],
+    calculate: async (context) => {
+      const analytics = await context.session.currentAnalytics()
+      const issues = domainIssues(analytics.securityPerformance.issues)
+      const dataQuality = estimatedSecurityQuality(
+        analytics.securityPerformance.complete,
+        analytics.valuationBundle.freshness,
+        [...analytics.valuationBundle.freshnessIssues, ...issues],
+      )
+      const asOf = analytics.securityPerformance.valuationDate
+      return metricResult({
+        metric: 'security_xirr',
+        value: dataQuality.status === 'ESTIMATED' ? analytics.securityPerformance.xirr : null,
+        unit: 'decimal',
+        period: { from: analytics.securityPerformance.securityCashFlows[0]?.date ?? null, to: asOf },
+        as_of: asOf,
+        status: dataQuality.status,
+        calculation_version: SECURITY_INVESTMENT_CALCULATION_VERSION,
+        issues: dataQuality.issues,
+        lineage: metricLineage(context, dataQuality, SECURITY_INVESTMENT_CALCULATION_VERSION, asOf),
+      })
+    },
+  })
 
   registry.register({
     name: 'xirr',

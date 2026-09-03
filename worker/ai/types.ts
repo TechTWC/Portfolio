@@ -1,11 +1,12 @@
 export type JsonScalar = string | number | boolean | null
 export type DataRow = Record<string, JsonScalar>
 
-export type DataQualityStatus = 'COMPLETE' | 'INCOMPLETE' | 'STALE'
+export type DataQualityStatus = 'COMPLETE' | 'ESTIMATED' | 'INCOMPLETE' | 'STALE'
 
 export type DataQualityIssue = {
   type: string
   message: string
+  severity?: 'WARNING' | 'BLOCKING'
   field?: string
   symbol?: string
   date?: string

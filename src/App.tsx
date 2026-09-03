@@ -27,7 +27,7 @@ const WORKSPACE_VIEWS: Array<{ id: WorkspaceView; label: string; eyebrow: string
   { id: 'cash', label: '現金與換匯', eyebrow: 'CASH & FX', title: '現金與換匯', description: '各幣別資金流、期末現金與外幣 TWD 成本池。' },
   { id: 'valuation', label: '估值與市值', eyebrow: 'VALUATION', title: '估值與市值', description: 'Point-in-Time 持倉市值、現金換算、行情與估值更新。' },
   { id: 'fx-cost', label: '外幣 TWD 成本', eyebrow: 'TWD COST BASIS', title: '外幣 TWD 成本', description: '檢視外幣資金成本、證券 TWD 成本與已實現匯兌損益。' },
-  { id: 'performance', label: '資金報酬與 XIRR', eyebrow: 'MONEY-WEIGHTED RETURN', title: '資金報酬與 XIRR', description: '以正式外部現金流與 ACTIVE 估值計算投資人資金報酬。' },
+  { id: 'performance', label: '證券投入 XIRR', eyebrow: 'ESTIMATED SECURITY RETURN', title: '證券投入與推估 XIRR', description: '以買賣紀錄與 ACTIVE 持倉市值估算證券投入的資金加權年化效率。' },
   { id: 'historical', label: '歷史 NAV', eyebrow: 'HISTORICAL ANALYSIS', title: '歷史 NAV', description: '檢視歷史市值曲線、資料品質與受控的 TWR／回撤狀態。' },
   { id: 'data', label: '資料管理', eyebrow: 'DATA MANAGEMENT', title: '資料管理', description: '上傳、預覽、啟用與稽核目前 ACTIVE 交易資料。' },
 ]
@@ -433,9 +433,9 @@ export default function App() {
             </article>
             <article className="focus-card compact-focus">
               <span>PERFORMANCE</span>
-              <h2>正式績效口徑</h2>
-              <p>股息與公司行動未完整前，系統不會宣稱完整 TWR 或回撤。</p>
-              <button className="secondary" type="button" onClick={() => setView('performance')}>查看資金報酬</button>
+              <h2>證券投入推估績效</h2>
+              <p>以買賣紀錄為主要口徑估算證券投入 XIRR；股息與公司行動未完整前，不宣稱完整總報酬、TWR 或回撤。</p>
+              <button className="secondary" type="button" onClick={() => setView('performance')}>查看推估證券 XIRR</button>
             </article>
           </section>
         </>}

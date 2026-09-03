@@ -4,13 +4,14 @@ import type { StoredTransaction } from '../../src/lib/contracts'
 import { buildFxCostPool } from '../../src/lib/fx-cost-pool'
 import { deriveHistoricalNavDates } from '../../src/lib/historical-nav-schedule'
 import { buildCurrentPerformance } from '../../src/lib/performance'
+import { buildSecurityInvestmentPerformance } from '../../src/lib/security-performance'
 import {
   buildHistoricalPerformanceSeries,
   type HistoricalPerformanceSeries,
 } from '../../src/lib/time-weighted-performance'
 import type { NormalizedValuationMark } from '../../src/lib/valuation-contracts'
 import { toValuationMark } from '../../src/lib/valuation-contracts'
-import { buildPointInTimeValuation } from '../../src/lib/valuation'
+import { buildPointInTimeValuation, isPositionValuationComplete } from '../../src/lib/valuation'
 import { reconcileValuationWithTwdCost } from '../../src/lib/valuation-cost-reconciliation'
 import { determineDateFreshness, staleMarketDataMessage } from '../../src/lib/market-data-freshness'
 import type { AiUser, DataQuality, DataQualityIssue } from './types'
@@ -255,6 +256,14 @@ export class PortfolioReadSession {
       valuationComplete: currentValuation?.complete ?? false,
       terminalAssetsTwd: currentValuation?.totalAssetsTwd ?? null,
     })
+    const securityPerformance = buildSecurityInvestmentPerformance({
+      transactions: valuationBundle.transactions,
+      valuationDate: valuationBundle.snapshot?.valuation_date ?? null,
+      positionValuationComplete: valuationBundle.valuation
+        ? isPositionValuationComplete(valuationBundle.valuation)
+        : false,
+      terminalPositionValueTwd: valuationBundle.valuation?.knownPositionValueTwd ?? null,
+    })
 
     return {
       state,
@@ -266,6 +275,7 @@ export class PortfolioReadSession {
       currentValuation,
       reconciliation,
       performance,
+      securityPerformance,
     }
   }
 
