@@ -38,7 +38,7 @@ export type SecurityCashFlow = {
 export type SecurityInvestmentPerformanceInput = {
   transactions: NormalizedTransaction[]
   valuationDate: string | null
-  valuationComplete: boolean
+  positionValuationComplete: boolean
   terminalPositionValueTwd: number | null
 }
 
@@ -104,7 +104,7 @@ export function buildSecurityInvestmentPerformance(
   }
 
   if (
-    !input.valuationComplete
+    !input.positionValuationComplete
     || input.terminalPositionValueTwd === null
     || !Number.isFinite(input.terminalPositionValueTwd)
     || input.terminalPositionValueTwd < 0
@@ -112,13 +112,15 @@ export function buildSecurityInvestmentPerformance(
     issues.push({
       code: 'INCOMPLETE_VALUATION',
       severity: 'BLOCKING',
-      message: 'ACTIVE 估值不完整，不能把已知部分持倉當成完整期末市值',
+      message: 'ACTIVE 持倉估值不完整，不能把已知部分持倉當成完整期末市值',
       sourceRowNumbers: [],
     })
   }
 
   if (valuationDate && isIsoDate(valuationDate)) {
-    const laterRows = input.transactions.filter((row) => row.tradeDate > valuationDate)
+    const laterRows = input.transactions.filter((row) =>
+      row.transactionType === 'SECURITY' && row.tradeDate > valuationDate,
+    )
     if (laterRows.length > 0) {
       issues.push({
         code: 'TRANSACTION_AFTER_VALUATION_DATE',
@@ -175,7 +177,7 @@ export function buildSecurityInvestmentPerformance(
   if (
     valuationDate
     && isIsoDate(valuationDate)
-    && input.valuationComplete
+    && input.positionValuationComplete
     && input.terminalPositionValueTwd !== null
     && Number.isFinite(input.terminalPositionValueTwd)
     && input.terminalPositionValueTwd >= 0
@@ -196,7 +198,9 @@ export function buildSecurityInvestmentPerformance(
   const grossSaleProceedsTwd = clean(events
     .filter((event) => event.kind === 'SALE')
     .reduce((total, event) => total + event.amountTwd, 0))
-  const terminalPositionValueTwd = input.valuationComplete ? input.terminalPositionValueTwd : null
+  const terminalPositionValueTwd = input.positionValuationComplete
+    ? input.terminalPositionValueTwd
+    : null
   const netSecurityCapitalDeployedTwd = clean(grossPurchasesTwd - grossSaleProceedsTwd)
   const estimatedGainTwd = terminalPositionValueTwd === null
     ? null

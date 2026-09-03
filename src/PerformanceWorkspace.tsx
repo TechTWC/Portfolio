@@ -3,6 +3,7 @@ import { api } from './lib/api'
 import { buildCurrentPerformance } from './lib/performance'
 import { staleMarketDataMessage } from './lib/market-data-freshness'
 import { buildSecurityInvestmentPerformance } from './lib/security-performance'
+import { isPositionValuationComplete } from './lib/valuation'
 import type { ValuationBootstrapResponse } from './lib/valuation-contracts'
 
 function formatAmount(value: number | null): string {
@@ -55,10 +56,10 @@ export default function PerformanceWorkspace() {
   const estimated = useMemo(() => buildSecurityInvestmentPerformance({
     transactions: valuation?.transactions ?? [],
     valuationDate: valuation?.activeSnapshot?.valuationDate ?? null,
-    valuationComplete: valuation?.valuation?.complete ?? false,
-    terminalPositionValueTwd: valuation?.valuation?.complete
-      ? valuation.valuation.knownPositionValueTwd
-      : null,
+    positionValuationComplete: valuation?.valuation
+      ? isPositionValuationComplete(valuation.valuation)
+      : false,
+    terminalPositionValueTwd: valuation?.valuation?.knownPositionValueTwd ?? null,
   }), [valuation])
 
   const official = useMemo(() => buildCurrentPerformance({

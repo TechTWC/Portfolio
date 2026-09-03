@@ -29,7 +29,7 @@ function calculate(
   return buildSecurityInvestmentPerformance({
     transactions,
     valuationDate: '2027-01-01',
-    valuationComplete: true,
+    positionValuationComplete: true,
     terminalPositionValueTwd: 110,
     ...overrides,
   })
@@ -138,13 +138,31 @@ describe('estimated security investment XIRR', () => {
 
   it('blocks an incomplete valuation instead of using partial position value', () => {
     const result = calculate([row()], {
-      valuationComplete: false,
+      positionValuationComplete: false,
       terminalPositionValueTwd: null,
     })
 
     expect(result.complete).toBe(false)
     expect(result.terminalPositionValueTwd).toBeNull()
     expect(result.issues.some((issue) => issue.code === 'INCOMPLETE_VALUATION')).toBe(true)
+  })
+
+  it('ignores non-security transactions after the valuation date', () => {
+    const result = calculate([
+      row(),
+      row({
+        sourceRowNumber: 3,
+        tradeDate: '2027-02-01',
+        transactionType: 'CASH_IN',
+        ticker: '',
+        quantity: 0,
+        amountForeign: 1_000,
+      }),
+    ])
+
+    expect(result.complete).toBe(true)
+    expect(result.xirr).toBeCloseTo(0.1, 9)
+    expect(result.issues).toEqual([])
   })
 
   it('blocks transactions later than the valuation date', () => {

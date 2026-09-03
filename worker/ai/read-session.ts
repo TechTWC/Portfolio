@@ -11,7 +11,7 @@ import {
 } from '../../src/lib/time-weighted-performance'
 import type { NormalizedValuationMark } from '../../src/lib/valuation-contracts'
 import { toValuationMark } from '../../src/lib/valuation-contracts'
-import { buildPointInTimeValuation } from '../../src/lib/valuation'
+import { buildPointInTimeValuation, isPositionValuationComplete } from '../../src/lib/valuation'
 import { reconcileValuationWithTwdCost } from '../../src/lib/valuation-cost-reconciliation'
 import { determineDateFreshness, staleMarketDataMessage } from '../../src/lib/market-data-freshness'
 import type { AiUser, DataQuality, DataQualityIssue } from './types'
@@ -257,10 +257,12 @@ export class PortfolioReadSession {
       terminalAssetsTwd: currentValuation?.totalAssetsTwd ?? null,
     })
     const securityPerformance = buildSecurityInvestmentPerformance({
-      transactions,
-      valuationDate: currentValuation ? valuationBundle.snapshot?.valuation_date ?? null : null,
-      valuationComplete: currentValuation?.complete ?? false,
-      terminalPositionValueTwd: currentValuation?.knownPositionValueTwd ?? null,
+      transactions: valuationBundle.transactions,
+      valuationDate: valuationBundle.snapshot?.valuation_date ?? null,
+      positionValuationComplete: valuationBundle.valuation
+        ? isPositionValuationComplete(valuationBundle.valuation)
+        : false,
+      terminalPositionValueTwd: valuationBundle.valuation?.knownPositionValueTwd ?? null,
     })
 
     return {

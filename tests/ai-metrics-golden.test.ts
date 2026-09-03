@@ -59,7 +59,7 @@ function baseSession(overrides: Record<string, unknown> = {}) {
   const securityPerformance = buildSecurityInvestmentPerformance({
     transactions: [securityPurchase],
     valuationDate: '2026-01-01',
-    valuationComplete: true,
+    positionValuationComplete: true,
     terminalPositionValueTwd: 110,
   })
   const currentAnalytics = { performance, securityPerformance, valuationBundle }
