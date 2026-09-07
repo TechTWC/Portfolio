@@ -67,6 +67,29 @@ describe('estimated security investment XIRR', () => {
     ])
   })
 
+  it('accepts a sale with zero net proceeds without adding a positive cash flow', () => {
+    const result = calculate([
+      row({ quantity: 2, amountForeign: 200, price: 100 }),
+      row({
+        sourceRowNumber: 3,
+        tradeDate: '2026-07-01',
+        quantity: -1,
+        amountForeign: 10,
+        price: 10,
+        fee: 10,
+      }),
+    ], { terminalPositionValueTwd: 220 })
+
+    expect(result.complete).toBe(true)
+    expect(result.xirr).toBeCloseTo(0.1, 9)
+    expect(result.grossSaleProceedsTwd).toBe(0)
+    expect(result.issues).toEqual([])
+    expect(result.securityCashFlows).toEqual([
+      expect.objectContaining({ kind: 'PURCHASE', signedAmountTwd: -200 }),
+      expect.objectContaining({ kind: 'TERMINAL_POSITION_VALUE', signedAmountTwd: 220 }),
+    ])
+  })
+
   it('uses each foreign security transaction FX rate', () => {
     const result = calculate([
       row({ ticker: 'VOO', currency: 'USD', amountForeign: 100, fxRate: 30, fee: 1 }),

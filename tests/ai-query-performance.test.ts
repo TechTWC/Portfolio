@@ -334,6 +334,19 @@ describe('AI on-demand query performance', () => {
     ])
   })
 
+  it('keeps stale security XIRR metric lineage bound to the valuation snapshot transaction revision', async () => {
+    const session = new PortfolioReadSession(securityLineageDatabase({
+      currentDatasetId: 'dataset-current',
+      snapshotDatasetId: 'dataset-snapshot',
+    }), { id: 'stale-metric-user', email: 'owner@example.test' }, new Date('2026-01-02T00:00:00Z'))
+
+    const result = await createMetricRegistry().getMetric('security_xirr', {}, context(session))
+
+    expect(result.status).toBe('STALE')
+    expect(result.value).toBeNull()
+    expect(result.lineage.transaction_revision).toBe(1)
+  })
+
   it('calculates security XIRR when only an unrelated cash wallet is unvalued', async () => {
     const session = new PortfolioReadSession(securityLineageDatabase({
       currentDatasetId: 'dataset-current',

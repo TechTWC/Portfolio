@@ -712,7 +712,9 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
         status: dataQuality.status,
         calculation_version: SECURITY_INVESTMENT_CALCULATION_VERSION,
         issues: dataQuality.issues,
-        lineage: metricLineage(context, dataQuality, SECURITY_INVESTMENT_CALCULATION_VERSION, asOf),
+        lineage: metricLineage(context, dataQuality, SECURITY_INVESTMENT_CALCULATION_VERSION, asOf, {
+          transactionRevision: analytics.valuationBundle.snapshot?.transaction_revision,
+        }),
       })
     },
   })
