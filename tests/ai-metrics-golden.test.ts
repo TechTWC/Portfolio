@@ -62,7 +62,7 @@ function baseSession(overrides: Record<string, unknown> = {}) {
     positionValuationComplete: true,
     terminalPositionValueTwd: 110,
   })
-  const currentAnalytics = { performance, securityPerformance, valuationBundle }
+  const currentAnalytics = { performance, valuationBundle }
   return {
     portfolioState: async () => ({
       activeDatasetId: 'dataset-8', cloudRevision: 8, filename: 'transactions.csv',
@@ -83,6 +83,7 @@ function baseSession(overrides: Record<string, unknown> = {}) {
       revision: 3, run: { dataVersion: 'market-data-v1.0.0', latestBarDate: '2026-01-01' },
       freshness: 'CURRENT', freshnessIssues: [],
     }),
+    securityPerformance: async () => securityPerformance,
     currentAnalytics: async () => currentAnalytics,
     analytics: async () => currentAnalytics,
     ...overrides,

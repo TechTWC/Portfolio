@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { StoredTransaction } from '../src/lib/contracts'
 import { createDataRegistry, createMetricRegistry } from '../worker/ai/platform'
 import { PortfolioReadSession } from '../worker/ai/read-session'
@@ -312,6 +312,20 @@ describe('AI on-demand query performance', () => {
     expect(fixture.executedSql.every((sql) => /^\s*SELECT\b/i.test(sql))).toBe(true)
   })
 
+  it('does not calculate security XIRR for unrelated analytics consumers', async () => {
+    const fixture = productionDatabase()
+    const session = new PortfolioReadSession(fixture.db, {
+      id: 'lazy-security-user', email: 'owner@example.test',
+    }, new Date('2026-08-18T00:00:00Z'))
+    const securityPerformance = vi.spyOn(session, 'securityPerformance')
+
+    await withinTimeout(createDataRegistry().query('portfolio_snapshot', {}, context(session)))
+    await withinTimeout(createDataRegistry().query('positions', {}, context(session)))
+    await withinTimeout(createDataRegistry().query('data_quality', {}, context(session)))
+
+    expect(securityPerformance).not.toHaveBeenCalled()
+  })
+
   it('keeps stale security cash flows bound to the valuation snapshot dataset and lineage', async () => {
     const session = new PortfolioReadSession(securityLineageDatabase({
       currentDatasetId: 'dataset-current',
@@ -345,6 +359,13 @@ describe('AI on-demand query performance', () => {
     expect(result.status).toBe('STALE')
     expect(result.value).toBeNull()
     expect(result.lineage.transaction_revision).toBe(1)
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'ESTIMATED_SECURITY_RETURN_SCOPE', severity: 'WARNING' }),
+      expect.objectContaining({
+        type: 'UNRECORDED_DISTRIBUTIONS_AND_CORPORATE_ACTIONS', severity: 'WARNING',
+      }),
+      expect.objectContaining({ type: 'TRADE_DATE_AND_RECORDED_FX_ASSUMPTIONS', severity: 'WARNING' }),
+    ]))
   })
 
   it('calculates security XIRR when only an unrelated cash wallet is unvalued', async () => {
@@ -355,13 +376,14 @@ describe('AI on-demand query performance', () => {
     }), { id: 'cash-user', email: 'owner@example.test' }, new Date('2026-01-02T00:00:00Z'))
 
     const analytics = await session.currentAnalytics()
+    const securityPerformance = await session.securityPerformance()
     const metric = await createMetricRegistry().getMetric('security_xirr', {}, context(session))
 
     expect(analytics.valuationBundle.valuation?.complete).toBe(false)
     expect(analytics.valuationBundle.valuation?.cash).toContainEqual(expect.objectContaining({
       currency: 'USD', marketValueTwd: null,
     }))
-    expect(analytics.securityPerformance.complete).toBe(true)
+    expect(securityPerformance.complete).toBe(true)
     expect(metric.status).toBe('ESTIMATED')
     expect(metric.value).toBeCloseTo(0.1, 9)
   })

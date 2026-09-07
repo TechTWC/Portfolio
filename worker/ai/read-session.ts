@@ -188,6 +188,7 @@ export class PortfolioReadSession {
   private valuationPromise?: Promise<ValuationBundle>
   private marketMetadataPromise?: Promise<MarketMetadata>
   private marketPromise?: Promise<MarketBundle>
+  private securityPerformancePromise?: Promise<ReturnType<typeof buildSecurityInvestmentPerformance>>
 
   constructor(
     readonly db: D1Database,
@@ -234,6 +235,11 @@ export class PortfolioReadSession {
     return this.marketMetadataPromise
   }
 
+  securityPerformance(): Promise<ReturnType<typeof buildSecurityInvestmentPerformance>> {
+    this.securityPerformancePromise ??= this.loadSecurityPerformance()
+    return this.securityPerformancePromise
+  }
+
   async currentAnalytics() {
     const [state, transactions, valuationBundle] = await Promise.all([
       this.portfolioState(),
@@ -256,15 +262,6 @@ export class PortfolioReadSession {
       valuationComplete: currentValuation?.complete ?? false,
       terminalAssetsTwd: currentValuation?.totalAssetsTwd ?? null,
     })
-    const securityPerformance = buildSecurityInvestmentPerformance({
-      transactions: valuationBundle.transactions,
-      valuationDate: valuationBundle.snapshot?.valuation_date ?? null,
-      positionValuationComplete: valuationBundle.valuation
-        ? isPositionValuationComplete(valuationBundle.valuation)
-        : false,
-      terminalPositionValueTwd: valuationBundle.valuation?.knownPositionValueTwd ?? null,
-    })
-
     return {
       state,
       transactions,
@@ -275,8 +272,19 @@ export class PortfolioReadSession {
       currentValuation,
       reconciliation,
       performance,
-      securityPerformance,
     }
+  }
+
+  private async loadSecurityPerformance(): Promise<ReturnType<typeof buildSecurityInvestmentPerformance>> {
+    const valuationBundle = await this.valuationBundle()
+    return buildSecurityInvestmentPerformance({
+      transactions: valuationBundle.transactions,
+      valuationDate: valuationBundle.snapshot?.valuation_date ?? null,
+      positionValuationComplete: valuationBundle.valuation
+        ? isPositionValuationComplete(valuationBundle.valuation)
+        : false,
+      terminalPositionValueTwd: valuationBundle.valuation?.knownPositionValueTwd ?? null,
+    })
   }
 
   async analytics() {

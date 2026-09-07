@@ -141,7 +141,9 @@ function estimatedSecurityQuality(
   if (calculationComplete && freshness === 'CURRENT') {
     return { status: 'ESTIMATED', issues: SECURITY_ESTIMATE_LIMITATIONS }
   }
-  return qualityFromIssues(freshness, blockingIssues)
+  return qualityFromIssues(freshness, calculationComplete
+    ? [...blockingIssues, ...SECURITY_ESTIMATE_LIMITATIONS]
+    : blockingIssues)
 }
 
 export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
@@ -318,15 +320,18 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
     allowedSort: ['date', 'type'],
     applyFilters: (rows, filters) => filterRows(rows, filters, { type: 'type' }, 'date'),
     readModel: async (context) => {
-      const analytics = await context.session.currentAnalytics()
-      const issues = domainIssues(analytics.securityPerformance.issues)
+      const [analytics, securityPerformance] = await Promise.all([
+        context.session.currentAnalytics(),
+        context.session.securityPerformance(),
+      ])
+      const issues = domainIssues(securityPerformance.issues)
       const dataQuality = estimatedSecurityQuality(
-        analytics.securityPerformance.complete,
+        securityPerformance.complete,
         analytics.valuationBundle.freshness,
         [...analytics.valuationBundle.freshnessIssues, ...issues],
       )
       return {
-        rows: analytics.securityPerformance.securityCashFlows.map((flow) => ({
+        rows: securityPerformance.securityCashFlows.map((flow) => ({
           date: flow.date,
           type: flow.kind,
           amount_twd: flow.amountTwd,
@@ -336,7 +341,7 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
         })),
         dataQuality,
         lineage: await lineage(context, dataQuality, {
-          asOf: analytics.securityPerformance.valuationDate,
+          asOf: securityPerformance.valuationDate,
           resourceVersion: RESOURCE_VERSION,
           calculationVersion: SECURITY_INVESTMENT_CALCULATION_VERSION,
           transactionRevision: analytics.valuationBundle.snapshot?.transaction_revision,
@@ -567,7 +572,6 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
       analytics.fxCost.issues.forEach((item) => add('FX_COST', item.code, item.message, item.tradeDate, item.ticker || null))
       analytics.currentValuation?.issues.forEach((item) => add('VALUATION', item.code, item.message))
       analytics.performance.issues.forEach((item) => add('PERFORMANCE', item.code, item.message))
-      analytics.securityPerformance.issues.forEach((item) => add('SECURITY_PERFORMANCE', item.code, item.message))
       analytics.valuationBundle.freshnessIssues.forEach((item) => add(
         'VALUATION', item.type, item.message, item.date ?? null, item.symbol ?? null,
       ))
@@ -695,19 +699,22 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
     calculationVersion: SECURITY_INVESTMENT_CALCULATION_VERSION,
     allowedParameters: [],
     calculate: async (context) => {
-      const analytics = await context.session.currentAnalytics()
-      const issues = domainIssues(analytics.securityPerformance.issues)
+      const [analytics, securityPerformance] = await Promise.all([
+        context.session.currentAnalytics(),
+        context.session.securityPerformance(),
+      ])
+      const issues = domainIssues(securityPerformance.issues)
       const dataQuality = estimatedSecurityQuality(
-        analytics.securityPerformance.complete,
+        securityPerformance.complete,
         analytics.valuationBundle.freshness,
         [...analytics.valuationBundle.freshnessIssues, ...issues],
       )
-      const asOf = analytics.securityPerformance.valuationDate
+      const asOf = securityPerformance.valuationDate
       return metricResult({
         metric: 'security_xirr',
-        value: dataQuality.status === 'ESTIMATED' ? analytics.securityPerformance.xirr : null,
+        value: dataQuality.status === 'ESTIMATED' ? securityPerformance.xirr : null,
         unit: 'decimal',
-        period: { from: analytics.securityPerformance.securityCashFlows[0]?.date ?? null, to: asOf },
+        period: { from: securityPerformance.securityCashFlows[0]?.date ?? null, to: asOf },
         as_of: asOf,
         status: dataQuality.status,
         calculation_version: SECURITY_INVESTMENT_CALCULATION_VERSION,
