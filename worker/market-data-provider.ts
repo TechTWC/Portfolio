@@ -103,7 +103,6 @@ async function fetchYahooChartHistory(
   if (!result) throw new Error(`${providerSymbol} 沒有行情資料`)
 
   const providerCurrency = result.meta?.currency?.trim().toUpperCase() ?? ''
-  if (!providerCurrency) throw new Error(`${providerSymbol} 行情來源未提供幣別`)
 
   const timestamps = result.timestamp ?? []
   const closes = result.indicators?.quote?.[0]?.close ?? []
@@ -156,8 +155,8 @@ export async function fetchYahooDailyHistory(
   now = new Date(),
 ): Promise<MarketInstrumentFetchResult> {
   const result = await fetchYahooChartHistory(instrument.providerSymbol, instrument.startDate, fetcher, now)
-  if (instrument.instrumentType !== 'FX' && result.providerCurrency !== instrument.currency) {
-    throw new Error(`${instrument.providerSymbol} 幣別為 ${result.providerCurrency}，預期為 ${instrument.currency}`)
+  if (instrument.instrumentType !== 'FX' && (!result.providerCurrency || result.providerCurrency !== instrument.currency)) {
+    throw new Error(`${instrument.providerSymbol} 幣別為 ${result.providerCurrency || 'UNKNOWN'}，預期為 ${instrument.currency}`)
   }
   return {
     ...instrument,
@@ -177,6 +176,7 @@ export async function fetchYahooStrategyHistory(
   const normalizedTicker = ticker.trim().toUpperCase()
   if (!normalizedTicker) throw new Error('策略標的代號不得為空')
   const result = await fetchYahooChartHistory(normalizedTicker, startDate, fetcher, now)
+  if (!result.providerCurrency) throw new Error(`${normalizedTicker} 行情來源未提供幣別`)
   return {
     ticker: normalizedTicker,
     currency: result.providerCurrency,
