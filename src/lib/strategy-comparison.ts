@@ -282,7 +282,6 @@ function simulateStrategy(input: SimulationInput): StrategySimulationResult {
   let previousPostFlowValue: number | null = null
   let growthIndex = 1
   let runningPeakIndex = 1
-  let runningPeakDate = firstExecutionDate
   let maximumDrawdown = 0
   let maximumDrawdownPeakIndex = 1
   let maximumDrawdownTroughDate: string | null = null
@@ -326,7 +325,6 @@ function simulateStrategy(input: SimulationInput): StrategySimulationResult {
 
     if (growthIndex > runningPeakIndex) {
       runningPeakIndex = growthIndex
-      runningPeakDate = date
     }
     const drawdown = clean(growthIndex / runningPeakIndex - 1)
     if (drawdown < maximumDrawdown) {
