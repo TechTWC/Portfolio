@@ -138,17 +138,6 @@ export function buildSecurityInvestmentPerformance(
     if (row.transactionType !== 'SECURITY') continue
     if (valuationDate && isIsoDate(valuationDate) && row.tradeDate > valuationDate) continue
 
-    const rate = row.currency === 'TWD' ? 1 : row.fxRate
-    if (rate === null || !Number.isFinite(rate) || rate <= 0) {
-      issues.push({
-        code: 'MISSING_SECURITY_FLOW_FX',
-        severity: 'BLOCKING',
-        message: `第 ${row.sourceRowNumber} 列 ${row.currency} 證券交易缺少可用的交易日匯率`,
-        sourceRowNumbers: [row.sourceRowNumber],
-      })
-      continue
-    }
-
     const amountNative = row.amountForeign > 0
       ? row.amountForeign
       : Math.abs(row.quantity) * row.price
@@ -165,6 +154,17 @@ export function buildSecurityInvestmentPerformance(
     }
 
     if (!purchase && netAmountNative === 0) continue
+
+    const rate = row.currency === 'TWD' ? 1 : row.fxRate
+    if (rate === null || !Number.isFinite(rate) || rate <= 0) {
+      issues.push({
+        code: 'MISSING_SECURITY_FLOW_FX',
+        severity: 'BLOCKING',
+        message: `第 ${row.sourceRowNumber} 列 ${row.currency} 證券交易缺少可用的交易日匯率`,
+        sourceRowNumbers: [row.sourceRowNumber],
+      })
+      continue
+    }
 
     const amountTwd = clean(netAmountNative * rate)
     events.push({
