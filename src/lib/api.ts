@@ -16,6 +16,10 @@ import type {
   MarketDataRefreshRequest,
   MarketDataRefreshResponse,
 } from './market-data-contracts'
+import type {
+  StrategyComparisonRequest,
+  StrategyComparisonResponse,
+} from './strategy-comparison-contracts'
 
 export class ApiError extends Error {
   constructor(
@@ -128,4 +132,9 @@ export const api = {
     })
     return updated
   },
+  strategyComparison: (payload: StrategyComparisonRequest) =>
+    requestJson<StrategyComparisonResponse>('/api/strategy-comparison', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 }
