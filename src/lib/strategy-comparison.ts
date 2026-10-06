@@ -1,9 +1,5 @@
 import type { NormalizedTransaction } from './contracts'
 import { findXirrRoots } from './performance'
-import {
-  calculateTimeWeightedPerformance,
-  type TwrObservation,
-} from './time-weighted-performance'
 import type {
   StrategyAllocation,
   StrategyComparisonRequest,
@@ -11,6 +7,7 @@ import type {
   StrategyIssue,
   StrategyMode,
   StrategySimulationResult,
+  StrategyCurvePoint,
 } from './strategy-comparison-contracts'
 
 const EPSILON = 1e-9
@@ -47,6 +44,14 @@ type SimulationInput = {
 
 function clean(value: number): number {
   return Math.abs(value) < EPSILON ? 0 : value
+}
+
+function utcTime(value: string): number {
+  return Date.parse(`${value}T00:00:00Z`)
+}
+
+function daysBetween(start: string, end: string): number {
+  return Math.round((utcTime(end) - utcTime(start)) / 86_400_000)
 }
 
 function validPrice(value: number | undefined): value is number {
@@ -269,11 +274,18 @@ function simulateStrategy(input: SimulationInput): StrategySimulationResult {
 
   const firstExecutionDate = events[0].executionDate
   const startIndex = lowerBound(input.commonDates, firstExecutionDate)
-  const observations: TwrObservation[] = []
+  const curve: StrategyCurvePoint[] = []
   const executions: StrategyExecution[] = []
   let grossContributionsTwd = 0
   let grossWithdrawalsTwd = 0
   let blocked = false
+  let previousPostFlowValue: number | null = null
+  let growthIndex = 1
+  let runningPeakIndex = 1
+  let runningPeakDate = firstExecutionDate
+  let maximumDrawdown = 0
+  let maximumDrawdownPeakIndex = 1
+  let maximumDrawdownTroughDate: string | null = null
 
   const valueAt = (date: string): number => input.allocations.reduce((total, allocation) => {
     const ticker = allocation.ticker.toUpperCase()
@@ -284,8 +296,44 @@ function simulateStrategy(input: SimulationInput): StrategySimulationResult {
 
   for (let index = startIndex; index < input.commonDates.length; index += 1) {
     const date = input.commonDates[index]
-    let contributionTwd = 0
-    let withdrawalTwd = 0
+    const preFlowValue = clean(valueAt(date))
+
+    if (previousPostFlowValue !== null) {
+      if (previousPostFlowValue > EPSILON) {
+        const growthFactor = preFlowValue / previousPostFlowValue
+        if (!Number.isFinite(growthFactor) || growthFactor <= 0) {
+          issues.push({
+            code: 'INVALID_UNITIZED_RETURN',
+            severity: 'BLOCKING',
+            message: `${date} 的 cash-flow 前資產價值無法形成有效的 unitized return`,
+            sourceRowNumbers: [],
+          })
+          blocked = true
+          break
+        }
+        growthIndex *= growthFactor
+      } else if (preFlowValue > EPSILON) {
+        issues.push({
+          code: 'UNEXPLAINED_VALUE_AFTER_ZERO_NAV',
+          severity: 'BLOCKING',
+          message: `${date} 在前一觀察點零資產後出現非零資產，無法安全串接 TWR`,
+          sourceRowNumbers: [],
+        })
+        blocked = true
+        break
+      }
+    }
+
+    if (growthIndex > runningPeakIndex) {
+      runningPeakIndex = growthIndex
+      runningPeakDate = date
+    }
+    const drawdown = clean(growthIndex / runningPeakIndex - 1)
+    if (drawdown < maximumDrawdown) {
+      maximumDrawdown = drawdown
+      maximumDrawdownPeakIndex = runningPeakIndex
+      maximumDrawdownTroughDate = date
+    }
 
     for (const event of eventsByDate.get(date) ?? []) {
       if (event.kind === 'CONTRIBUTION') {
@@ -301,7 +349,6 @@ function simulateStrategy(input: SimulationInput): StrategySimulationResult {
           holdings.set(ticker, (holdings.get(ticker) ?? 0) + allocated / price)
         }
         if (blocked) break
-        contributionTwd += event.amountTwd
         grossContributionsTwd += event.amountTwd
       } else {
         const portfolioValue = valueAt(date)
@@ -326,7 +373,6 @@ function simulateStrategy(input: SimulationInput): StrategySimulationResult {
             holdings.set(ticker, Math.max(0, units - saleValue / price))
           }
         }
-        withdrawalTwd += event.amountTwd
         grossWithdrawalsTwd += event.amountTwd
       }
       executions.push({
@@ -339,18 +385,20 @@ function simulateStrategy(input: SimulationInput): StrategySimulationResult {
     }
     if (blocked) break
 
-    observations.push({
+    const postFlowValue = clean(valueAt(date))
+    curve.push({
       date,
-      complete: true,
-      totalAssetsTwd: clean(valueAt(date)),
-      contributionTwd: clean(contributionTwd),
-      withdrawalTwd: clean(withdrawalTwd),
+      totalAssetsTwd: postFlowValue,
+      cumulativeTwr: clean(growthIndex - 1),
+      growthIndex,
+      drawdown,
     })
+    previousPostFlowValue = postFlowValue
   }
 
-  if (blocked || observations.length === 0) return emptyResult(input.mode, issues)
-  const terminal = observations.at(-1)!
-  const terminalValueTwd = terminal.totalAssetsTwd ?? 0
+  if (blocked || curve.length === 0) return emptyResult(input.mode, issues)
+  const terminal = curve.at(-1)!
+  const terminalValueTwd = terminal.totalAssetsTwd
   const estimatedGainTwd = clean(terminalValueTwd + grossWithdrawalsTwd - grossContributionsTwd)
   const moneyMultiple = grossContributionsTwd > EPSILON
     ? (terminalValueTwd + grossWithdrawalsTwd) / grossContributionsTwd
@@ -380,42 +428,44 @@ function simulateStrategy(input: SimulationInput): StrategySimulationResult {
     }
   }
 
-  const twr = calculateTimeWeightedPerformance(observations)
-  for (const issue of twr.issues) {
+  const startDate = curve[0]?.date ?? null
+  const endDate = terminal.date
+  const dayCount = startDate ? daysBetween(startDate, endDate) : 0
+  const cumulativeTwr = clean(growthIndex - 1)
+  const annualizedTwr = dayCount > 0 && growthIndex > 0
+    ? Math.pow(growthIndex, 365 / dayCount) - 1
+    : null
+  if (dayCount <= 0) {
     issues.push({
-      code: `TWR_${issue.code}`,
+      code: 'TWR_ZERO_TIME_SPAN',
       severity: 'BLOCKING',
-      message: issue.message,
+      message: '策略績效沒有正的時間跨度，無法年化 TWR',
       sourceRowNumbers: [],
     })
   }
-  const twrByDate = new Map(twr.points.map((point) => [point.date, point]))
-  const curve = observations.map((point) => {
-    const performancePoint = twrByDate.get(point.date)
-    return {
-      date: point.date,
-      totalAssetsTwd: point.totalAssetsTwd ?? 0,
-      cumulativeTwr: performancePoint?.cumulativeTwr ?? null,
-      growthIndex: performancePoint?.growthIndex ?? null,
-      drawdown: performancePoint?.drawdown ?? null,
-    }
-  })
+  const recoveryDate = maximumDrawdownTroughDate === null
+    ? null
+    : curve.find((point) =>
+      point.date > maximumDrawdownTroughDate!
+      && point.growthIndex !== null
+      && point.growthIndex + EPSILON >= maximumDrawdownPeakIndex,
+    )?.date ?? null
 
   return {
     mode: input.mode,
     status: issues.some((issue) => issue.severity === 'BLOCKING') ? 'INCOMPLETE' : 'ESTIMATED',
-    startDate: observations[0]?.date ?? null,
-    endDate: terminal.date,
+    startDate,
+    endDate,
     grossContributionsTwd: clean(grossContributionsTwd),
     grossWithdrawalsTwd: clean(grossWithdrawalsTwd),
     terminalValueTwd: clean(terminalValueTwd),
     estimatedGainTwd,
     moneyMultiple,
     xirr,
-    cumulativeTwr: twr.cumulativeTwr,
-    annualizedTwr: twr.annualizedTwr,
-    maximumDrawdown: twr.drawdown.maximumDrawdown,
-    recoveryDate: twr.drawdown.recoveryDate,
+    cumulativeTwr,
+    annualizedTwr,
+    maximumDrawdown,
+    recoveryDate,
     executionCount: executions.length,
     executions,
     curve,
