@@ -345,6 +345,7 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
           resourceVersion: RESOURCE_VERSION,
           calculationVersion: SECURITY_INVESTMENT_CALCULATION_VERSION,
           transactionRevision: analytics.valuationBundle.snapshot?.transaction_revision,
+          sourceVersion: analytics.valuationBundle.snapshot?.parser_version,
         }),
       }
     },
@@ -615,7 +616,7 @@ async function metricLineage(
   dataQuality: DataQuality,
   calculationVersion: string,
   asOf: string | null,
-  options: { transactionRevision?: number; valuationVersion?: number } = {},
+  options: { transactionRevision?: number; valuationVersion?: number; sourceVersion?: string } = {},
 ): Promise<DataLineage> {
   return lineage(context, dataQuality, { asOf, calculationVersion, ...options })
 }
@@ -721,6 +722,7 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
         issues: dataQuality.issues,
         lineage: metricLineage(context, dataQuality, SECURITY_INVESTMENT_CALCULATION_VERSION, asOf, {
           transactionRevision: analytics.valuationBundle.snapshot?.transaction_revision,
+          sourceVersion: analytics.valuationBundle.snapshot?.parser_version,
         }),
       })
     },
