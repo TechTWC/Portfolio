@@ -143,7 +143,7 @@ export function buildSecurityInvestmentPerformance(
       : Math.abs(row.quantity) * row.price
     const purchase = row.quantity > 0
     const netAmountNative = purchase ? amountNative + row.fee : amountNative - row.fee
-    if (!Number.isFinite(netAmountNative) || (purchase ? netAmountNative <= 0 : netAmountNative < 0)) {
+    if (!Number.isFinite(netAmountNative) || (purchase ? netAmountNative <= 0 : netAmountNative < -EPSILON)) {
       issues.push({
         code: 'INVALID_SECURITY_PROCEEDS',
         severity: 'BLOCKING',
@@ -153,7 +153,7 @@ export function buildSecurityInvestmentPerformance(
       continue
     }
 
-    if (!purchase && netAmountNative === 0) continue
+    if (!purchase && netAmountNative <= EPSILON) continue
 
     const rate = row.currency === 'TWD' ? 1 : row.fxRate
     if (rate === null || !Number.isFinite(rate) || rate <= 0) {
