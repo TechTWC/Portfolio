@@ -14,11 +14,13 @@ import {
 import { compareValuationMarks } from '../src/lib/valuation-diff'
 import { transactionBindingMatches } from '../src/lib/valuation-lineage'
 import { marketDataRefreshRequestSchema } from '../src/lib/market-data-contracts'
+import { strategyComparisonRequestSchema } from '../src/lib/strategy-comparison-contracts'
 import { requireExistingUser, requireUser, type Bindings, type Variables } from './auth'
 import { createPortfolioMcpHandler } from './ai/mcp'
 import { getMarketDataBootstrap } from './market-data-repository'
 import { refreshMarketData } from './market-data-service'
 import { runScheduledMarketRefresh } from './market-refresh-scheduler'
+import { runStrategyComparison } from './strategy-comparison-service'
 import {
   activateDataset,
   currentRevision,
@@ -178,6 +180,23 @@ app.get('/api/market-data/bootstrap', async (c) => {
     c.get('user'),
     c.req.query('includeMarks') !== '0',
   ))
+})
+
+app.post('/api/strategy-comparison', async (c) => {
+  const parsed = strategyComparisonRequestSchema.safeParse(await c.req.json().catch(() => null))
+  if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? '策略比較參數錯誤' }, 400)
+  try {
+    return c.json(await runStrategyComparison(c.env.DB, c.get('user'), parsed.data))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message === 'NO_ACTIVE_DATASET') {
+      return c.json({ error: '目前沒有 ACTIVE 交易資料，無法建立 Transaction Replay', code: message }, 422)
+    }
+    return c.json({
+      error: `策略比較行情或計算失敗：${message}`,
+      code: 'STRATEGY_COMPARISON_UNAVAILABLE',
+    }, 502)
+  }
 })
 
 app.post('/api/market-data/refresh', async (c) => {
