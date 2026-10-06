@@ -547,7 +547,7 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
     name: 'data_quality',
     description: 'Current blocking and freshness issues across accounting, cash, FX, valuation and performance',
     fields: [
-      field('domain', 'enum', 'Affected business domain', { enum_values: ['TRANSACTIONS', 'CASH', 'FX_COST', 'VALUATION', 'PERFORMANCE', 'SECURITY_PERFORMANCE', 'MARKET_DATA'] }),
+      field('domain', 'enum', 'Affected business domain', { enum_values: ['TRANSACTIONS', 'CASH', 'FX_COST', 'VALUATION', 'PERFORMANCE', 'MARKET_DATA'] }),
       field('code', 'string', 'Stable issue code'),
       field('message', 'string', 'Human-readable issue explanation'),
       field('severity', 'enum', 'Issue severity', { enum_values: ['BLOCKING'] }),
