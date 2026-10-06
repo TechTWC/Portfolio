@@ -67,15 +67,18 @@ describe('estimated security investment XIRR', () => {
     ])
   })
 
-  it('accepts a sale with zero net proceeds without adding a positive cash flow', () => {
+  it('accepts a foreign sale with zero net proceeds without requiring FX or adding a positive cash flow', () => {
     const result = calculate([
       row({ quantity: 2, amountForeign: 200, price: 100 }),
       row({
         sourceRowNumber: 3,
         tradeDate: '2026-07-01',
+        ticker: 'VOO',
+        currency: 'USD',
         quantity: -1,
         amountForeign: 10,
         price: 10,
+        fxRate: null,
         fee: 10,
       }),
     ], { terminalPositionValueTwd: 220 })
