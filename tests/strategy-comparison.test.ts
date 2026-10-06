@@ -65,6 +65,19 @@ describe('strategy comparison v0.1', () => {
     expect(result.lumpSum.terminalValueTwd).toBeGreaterThan(result.dca.terminalValueTwd ?? 0)
   })
 
+  it('keeps TWR independent of DCA contribution timing for a single asset', () => {
+    const result = buildStrategyComparisonCore({
+      request,
+      priceSeries,
+      transactions: [row({ amountForeign: 100 })],
+    })
+
+    expect(result.dca.cumulativeTwr).toBeCloseTo(0.331, 12)
+    expect(result.lumpSum.cumulativeTwr).toBeCloseTo(0.331, 12)
+    expect(result.dca.maximumDrawdown).toBe(0)
+    expect(result.lumpSum.maximumDrawdown).toBe(0)
+  })
+
   it('replays actual security buys as contributions and sells as withdrawals', () => {
     const result = buildStrategyComparisonCore({
       request,
