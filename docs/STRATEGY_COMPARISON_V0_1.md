@@ -25,7 +25,7 @@ The target portfolio supports 1–5 Yahoo-recognized tickers. Weights must be po
 - Transaction Replay withdrawals sell the simulated portfolio pro rata to current simulated market value. If a copied withdrawal exceeds simulated wealth, the replay fails closed rather than inventing leverage or negative holdings.
 - No automatic rebalancing occurs after the initial/recurring contribution allocation. New contributions are allocated at target weights; withdrawals are pro rata to current holdings.
 - XIRR uses simulated contributions, withdrawals and terminal value. Multiple roots fail closed.
-- TWR and drawdown use the simulated daily total-return-proxy wealth series with strategy cash flows removed by the existing TWR engine.
+- TWR is unitized at each common market date: market return is measured on wealth immediately before that date's external strategy flow versus the prior post-flow wealth, so a DCA contribution executed at the current close cannot dilute the preceding market return. Drawdown is calculated from that unitized growth index.
 
 ## Data and safety boundaries
 
