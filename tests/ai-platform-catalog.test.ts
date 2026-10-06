@@ -29,6 +29,12 @@ describe('AI semantic platform catalog', () => {
     ])
   })
 
+  it('does not advertise an unsupported central security-performance quality domain', () => {
+    const description = createDataRegistry().describe('data_quality')
+    const domain = description.fields.find((field) => field.name === 'domain')
+    expect(domain?.enum_values).not.toContain('SECURITY_PERFORMANCE')
+  })
+
   it('describes percentage units as decimal values rather than ambiguous percent numbers', () => {
     const metrics = createMetricRegistry().list()
     expect(metrics.find((metric) => metric.name === 'twr')?.unit).toBe('decimal')
