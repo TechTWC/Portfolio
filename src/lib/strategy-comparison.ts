@@ -106,7 +106,7 @@ function buildPriceMaps(
   const issues: StrategyIssue[] = []
   const seriesByTicker = new Map(priceSeries.map((series) => [series.ticker.toUpperCase(), series]))
   const priceByTickerAndDate = new Map<string, Map<string, number>>()
-  let common: Set<string> | null = null
+  const dateSets: Array<Set<string>> = []
 
   for (const allocation of allocations) {
     const ticker = allocation.ticker.toUpperCase()
@@ -135,16 +135,15 @@ function buildPriceMaps(
       continue
     }
     priceByTickerAndDate.set(ticker, map)
-    const dates = new Set<string>(map.keys())
-    if (common === null) {
-      common = dates
-    } else {
-      const priorCommon = common
-      common = new Set<string>(Array.from(priorCommon).filter((date) => dates.has(date)))
-    }
+    dateSets.push(new Set<string>(map.keys()))
   }
 
-  const commonDates = [...(common ?? new Set<string>())].sort()
+  const firstDateSet = dateSets[0]
+  const commonDates = firstDateSet
+    ? Array.from(firstDateSet)
+      .filter((date) => dateSets.slice(1).every((set) => set.has(date)))
+      .sort()
+    : []
   if (issues.length === 0 && commonDates.length === 0) {
     issues.push({
       code: 'NO_COMMON_TRADING_DATE',
