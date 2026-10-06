@@ -147,6 +147,7 @@ describe('AI official Metric golden parity', () => {
       calculation_version: 'estimated-security-investment-xirr-v0.1',
     })
     expect(estimated.value).toBeCloseTo(0.1, 9)
+    expect(estimated.lineage.source_version).toBe('valuation-v0.3')
     expect(estimated.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'ESTIMATED_SECURITY_RETURN_SCOPE', severity: 'WARNING' }),
       expect.objectContaining({
@@ -171,6 +172,7 @@ describe('AI official Metric golden parity', () => {
       type: 'UNRECORDED_DISTRIBUTIONS_AND_CORPORATE_ACTIONS', severity: 'WARNING',
     }))
     expect(result.lineage.calculation_version).toBe('estimated-security-investment-xirr-v0.1')
+    expect(result.lineage.source_version).toBe('valuation-v0.3')
     expect(result.rows).toEqual([
       expect.objectContaining({
         date: '2025-01-01', type: 'PURCHASE', signed_amount_twd: -100, source: 'TRANSACTION',
