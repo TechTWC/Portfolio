@@ -149,11 +149,15 @@ describe('estimated security investment XIRR', () => {
     expect(result.xirr).toBeCloseTo(0.3384104923, 9)
   })
 
-  it('blocks a foreign security transaction without a usable trade-date FX rate', () => {
+  it('fails gain, multiple and XIRR closed when a foreign security flow has no usable FX rate', () => {
     const result = calculate([row({ ticker: 'VOO', currency: 'USD', fxRate: null })])
 
     expect(result.complete).toBe(false)
     expect(result.xirr).toBeNull()
+    expect(result.estimatedGainTwd).toBeNull()
+    expect(result.securityMultiple).toBeNull()
+    expect(result.terminalPositionValueTwd).toBe(110)
+    expect(result.grossPurchasesTwd).toBe(0)
     expect(result.issues).toContainEqual(expect.objectContaining({
       code: 'MISSING_SECURITY_FLOW_FX', sourceRowNumbers: [2],
     }))
