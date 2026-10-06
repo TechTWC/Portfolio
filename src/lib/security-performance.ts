@@ -204,15 +204,20 @@ export function buildSecurityInvestmentPerformance(
     ? input.terminalPositionValueTwd
     : null
   const netSecurityCapitalDeployedTwd = clean(grossPurchasesTwd - grossSaleProceedsTwd)
-  const securityFlowTranslationComplete = !issues.some((issue) =>
-    issue.code === 'MISSING_SECURITY_FLOW_FX' || issue.code === 'INVALID_SECURITY_PROCEEDS',
+  const securitySummaryInputsComplete = !issues.some((issue) =>
+    issue.code === 'MISSING_VALUATION'
+    || issue.code === 'INCOMPLETE_VALUATION'
+    || issue.code === 'INVALID_VALUATION_DATE'
+    || issue.code === 'TRANSACTION_AFTER_VALUATION_DATE'
+    || issue.code === 'MISSING_SECURITY_FLOW_FX'
+    || issue.code === 'INVALID_SECURITY_PROCEEDS',
   )
-  const estimatedGainTwd = terminalPositionValueTwd === null || !securityFlowTranslationComplete
+  const estimatedGainTwd = terminalPositionValueTwd === null || !securitySummaryInputsComplete
     ? null
     : clean(terminalPositionValueTwd + grossSaleProceedsTwd - grossPurchasesTwd)
   const securityMultiple = terminalPositionValueTwd === null
     || grossPurchasesTwd <= EPSILON
-    || !securityFlowTranslationComplete
+    || !securitySummaryInputsComplete
     ? null
     : (terminalPositionValueTwd + grossSaleProceedsTwd) / grossPurchasesTwd
 
