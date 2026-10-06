@@ -192,13 +192,16 @@ describe('estimated security investment XIRR', () => {
     expect(result.issues).toEqual([])
   })
 
-  it('blocks transactions later than the valuation date', () => {
+  it('fails summary metrics closed when a security transaction is later than the valuation date', () => {
     const result = calculate([
       row(),
       row({ sourceRowNumber: 3, tradeDate: '2027-02-01' }),
     ])
 
     expect(result.complete).toBe(false)
+    expect(result.xirr).toBeNull()
+    expect(result.estimatedGainTwd).toBeNull()
+    expect(result.securityMultiple).toBeNull()
     expect(result.issues).toContainEqual(expect.objectContaining({
       code: 'TRANSACTION_AFTER_VALUATION_DATE', sourceRowNumbers: [3],
     }))
