@@ -21,9 +21,12 @@ jobs:
       - name: Audit production dependencies
         run: npm run audit:production
       - name: Audit all dependencies
+        if: always()
         run: npm run audit:all
       - run: npm test
+        if: always()
       - name: Typecheck
+        if: always()
         shell: bash
         run: |
           set -o pipefail
@@ -37,7 +40,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
       - run: npm run build
+        if: always()
       - name: Validate staging config renderer
+        if: always()
         env:
           CLOUDFLARE_D1_DATABASE_ID: 00000000-0000-0000-0000-000000000001
           CLOUDFLARE_D1_DATABASE_NAME: portfolio-analyzer-staging
