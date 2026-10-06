@@ -67,7 +67,7 @@ describe('estimated security investment XIRR', () => {
     ])
   })
 
-  it('accepts a foreign sale with zero net proceeds without requiring FX or adding a positive cash flow', () => {
+  it('treats epsilon-sized foreign sale proceeds as zero without requiring FX', () => {
     const result = calculate([
       row({ quantity: 2, amountForeign: 200, price: 100 }),
       row({
@@ -75,14 +75,16 @@ describe('estimated security investment XIRR', () => {
         tradeDate: '2026-07-01',
         ticker: 'VOO',
         currency: 'USD',
-        quantity: -1,
-        amountForeign: 10,
-        price: 10,
+        quantity: -3,
+        amountForeign: 0,
+        price: 0.1,
         fxRate: null,
-        fee: 10,
+        fee: 0.3,
       }),
     ], { terminalPositionValueTwd: 220 })
 
+    expect(3 * 0.1 - 0.3).toBeGreaterThan(0)
+    expect(3 * 0.1 - 0.3).toBeLessThan(1e-9)
     expect(result.complete).toBe(true)
     expect(result.xirr).toBeCloseTo(0.1, 9)
     expect(result.grossSaleProceedsTwd).toBe(0)
