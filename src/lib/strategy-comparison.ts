@@ -135,8 +135,13 @@ function buildPriceMaps(
       continue
     }
     priceByTickerAndDate.set(ticker, map)
-    const dates = new Set(map.keys())
-    common = common === null ? dates : new Set([...common].filter((date) => dates.has(date)))
+    const dates = new Set<string>(map.keys())
+    if (common === null) {
+      common = dates
+    } else {
+      const priorCommon = common
+      common = new Set<string>(Array.from(priorCommon).filter((date) => dates.has(date)))
+    }
   }
 
   const commonDates = [...(common ?? new Set<string>())].sort()
@@ -500,19 +505,21 @@ export function buildStrategyComparisonCore(input: {
     }
   }
 
-  const dcaFlows = buildMonthlySchedule(input.request.startDate, input.request.endDate)
-    .map((requestedDate, order) => {
-      const executionDate = nextCommonTradingDate(market.commonDates, requestedDate)
-      if (!executionDate) return null
-      return {
-        requestedDate,
-        kind: 'CONTRIBUTION' as const,
-        amountTwd: input.request.dcaMonthlyAmountTwd,
-        sourceRowNumbers: [],
-        order,
-      }
+  const dcaFlows: ReplayFlow[] = []
+  for (const [order, requestedDate] of buildMonthlySchedule(
+    input.request.startDate,
+    input.request.endDate,
+  ).entries()) {
+    const executionDate = nextCommonTradingDate(market.commonDates, requestedDate)
+    if (!executionDate) continue
+    dcaFlows.push({
+      requestedDate,
+      kind: 'CONTRIBUTION',
+      amountTwd: input.request.dcaMonthlyAmountTwd,
+      sourceRowNumbers: [],
+      order,
     })
-    .filter((flow): flow is ReplayFlow => flow !== null)
+  }
   const lumpSumPrincipalTwd = clean(dcaFlows.length * input.request.dcaMonthlyAmountTwd)
   const lumpFlows: ReplayFlow[] = lumpSumPrincipalTwd > EPSILON ? [{
     requestedDate: input.request.startDate,
