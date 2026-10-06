@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchYahooDailyHistory, yahooSymbolForFx } from '../worker/market-data-provider'
+import { fetchYahooDailyHistory, fetchYahooStrategyHistory, yahooSymbolForFx } from '../worker/market-data-provider'
 import type { MarketInstrument } from '../src/lib/market-data-contracts'
 
 const instrument: MarketInstrument = {
@@ -98,6 +98,32 @@ describe('Yahoo Finance daily raw-close adapter', () => {
 
     await expect(fetchYahooDailyHistory(instrument, fetcher, new Date('2026-02-01T00:00:00Z')))
       .rejects.toThrow('已超過 10 天')
+  })
+
+  it('discovers a strategy symbol currency and preserves adjusted close', async () => {
+    const fetcher = vi.fn().mockResolvedValue(response({
+      chart: {
+        result: [{
+          meta: { currency: 'TWD', exchangeTimezoneName: 'Asia/Taipei' },
+          timestamp: [Math.floor(Date.parse('2026-01-02T05:30:00Z') / 1000)],
+          indicators: {
+            quote: [{ close: [100] }],
+            adjclose: [{ adjclose: [99] }],
+          },
+        }],
+      },
+    }))
+
+    const result = await fetchYahooStrategyHistory(
+      '0050.TW',
+      '2026-01-01',
+      fetcher,
+      new Date('2026-01-03T00:00:00Z'),
+    )
+
+    expect(result.ticker).toBe('0050.TW')
+    expect(result.currency).toBe('TWD')
+    expect(result.bars).toEqual([{ date: '2026-01-02', rawClose: 100, adjustedClose: 99 }])
   })
 
   it('uses Yahoo quote symbols for TWD conversion', () => {
