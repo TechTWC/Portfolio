@@ -55,7 +55,7 @@
 
 ## Phase 4 — strategy comparison
 
-狀態：尚未實作。自動行情 v1 先保存 SPY 與日資料，作為此 Phase 的共用底座。
+狀態：v0.1 開發中（DCA／等本金 Lump Sum／Transaction Replay＋1–5 檔自訂配置）；尚未完成 CI、Staging 驗收或合併。
 
 - equal-principal comparison
 - equal-cash-flow-timing comparison
