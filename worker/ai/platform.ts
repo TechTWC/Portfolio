@@ -307,12 +307,12 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
 
   registry.register(resource({
     name: 'security_cash_flows',
-    description: 'Estimated TWD security cash flows used by security_xirr; purchases are negative, net sale proceeds and terminal open-position value are positive',
+    description: 'Estimated TWD security cash flows from trades and terminal open-position value; can be used as security_xirr inputs only when that metric is explicitly requested',
     fields: [
       field('date', 'date', 'Trade date or ACTIVE valuation date', { date_semantics: 'Trade date is used as the estimated settlement date' }),
       field('type', 'enum', 'Estimated security cash-flow type', { enum_values: ['PURCHASE', 'SALE', 'TERMINAL_POSITION_VALUE'] }),
       field('amount_twd', 'number', 'Absolute estimated cash-flow amount in TWD', { unit: 'TWD', currency: 'TWD' }),
-      field('signed_amount_twd', 'number', 'Signed estimated XIRR cash flow in TWD', { unit: 'TWD', currency: 'TWD' }),
+      field('signed_amount_twd', 'number', 'Signed estimated security cash flow in TWD; purchases are negative and sale/terminal values are positive', { unit: 'TWD', currency: 'TWD' }),
       field('source_row_numbers', 'string', 'Comma-separated source transaction rows; blank for terminal valuation'),
       field('source', 'enum', 'Cash-flow source', { enum_values: ['TRANSACTION', 'ACTIVE_POSITION_VALUATION'] }),
     ],
@@ -320,18 +320,18 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
     allowedSort: ['date', 'type'],
     applyFilters: (rows, filters) => filterRows(rows, filters, { type: 'type' }, 'date'),
     readModel: async (context) => {
-      const [analytics, securityPerformance] = await Promise.all([
+      const [analytics, securityCashFlowSummary] = await Promise.all([
         context.session.currentAnalytics(),
-        context.session.securityPerformance(),
+        context.session.securityCashFlowSummary(),
       ])
-      const issues = domainIssues(securityPerformance.issues)
+      const issues = domainIssues(securityCashFlowSummary.issues)
       const dataQuality = estimatedSecurityQuality(
-        securityPerformance.complete,
+        securityCashFlowSummary.complete,
         analytics.valuationBundle.freshness,
         [...analytics.valuationBundle.freshnessIssues, ...issues],
       )
       return {
-        rows: securityPerformance.securityCashFlows.map((flow) => ({
+        rows: securityCashFlowSummary.securityCashFlows.map((flow) => ({
           date: flow.date,
           type: flow.kind,
           amount_twd: flow.amountTwd,
@@ -341,7 +341,7 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
         })),
         dataQuality,
         lineage: await lineage(context, dataQuality, {
-          asOf: securityPerformance.valuationDate,
+          asOf: securityCashFlowSummary.valuationDate,
           resourceVersion: RESOURCE_VERSION,
           calculationVersion: SECURITY_INVESTMENT_CALCULATION_VERSION,
           transactionRevision: analytics.valuationBundle.snapshot?.transaction_revision,
