@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { strategyComparisonRequestSchema } from '../src/lib/strategy-comparison-contracts'
-import { runStrategyComparison } from '../worker/strategy-comparison-service'
+import { adjustedStrategyPriceTwd, runStrategyComparison } from '../worker/strategy-comparison-service'
 
 const request = {
   startDate: '2026-01-01',
@@ -94,6 +94,55 @@ describe('Strategy Comparison input integrity / read-only service', () => {
         fetcher: fixtureFetcher([100, null, 121, 133.1]) as typeof fetch,
       },
     )).rejects.toThrow('MISSING_STRATEGY_ADJUSTED_CLOSE')
+  })
+
+  it('scales GBp prices to whole GBP before applying the TWD historical FX rate', () => {
+    expect(adjustedStrategyPriceTwd(120, 0.01, 40)).toBeCloseTo(48, 10)
+    expect(adjustedStrategyPriceTwd(120, 1, 40)).toBeCloseTo(4800, 10)
+    expect(() => adjustedStrategyPriceTwd(120, 0, 40)).toThrow('INVALID_STRATEGY_TWD_PRICE')
+  })
+
+  it('rejects incomplete start coverage even if end prices are available', async () => {
+    const { db } = fixtureDatabase()
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      chart: { result: [{
+        meta: { currency: 'TWD', exchangeTimezoneName: 'Asia/Taipei' },
+        timestamp: ['2026-03-01', '2026-04-01']
+          .map((date) => Math.floor(Date.parse(date + 'T05:30:00Z') / 1000)),
+        indicators: {
+          quote: [{ close: [100, 110] }],
+          adjclose: [{ adjclose: [100, 110] }],
+        },
+      }] },
+    }), { status: 200 }))
+    await expect(runStrategyComparison(
+      db, { id: 'synthetic-user', email: 'not-real@example.test' },
+      request, { now: new Date('2026-10-08T00:00:00Z'), fetcher: fetcher as typeof fetch },
+    )).rejects.toThrow('TRUNCATED_STRATEGY_HISTORY')
+  })
+
+  it('rejects insufficient shared-market coverage across individually valid series', async () => {
+    const { db } = fixtureDatabase()
+    const fetcher = vi.fn(async (url: string) => {
+      const dates = url.includes('/BBB?')
+        ? ['2026-01-03', '2026-02-03', '2026-03-03', '2026-04-01']
+        : ['2026-01-02', '2026-02-02', '2026-03-02', '2026-04-01']
+      return new Response(JSON.stringify({
+        chart: { result: [{
+          meta: { currency: 'TWD', exchangeTimezoneName: 'Asia/Taipei' },
+          timestamp: dates.map((date) => Math.floor(Date.parse(date + 'T05:30:00Z') / 1000)),
+          indicators: {
+            quote: [{ close: [100, 110, 120, 130] }],
+            adjclose: [{ adjclose: [100, 110, 120, 130] }],
+          },
+        }] },
+      }), { status: 200 })
+    })
+    await expect(runStrategyComparison(
+      db, { id: 'synthetic-user', email: 'not-real@example.test' },
+      { ...request, allocations: [{ ticker: 'AAA', weight: 0.5 }, { ticker: 'BBB', weight: 0.5 }] },
+      { now: new Date('2026-10-08T00:00:00Z'), fetcher: fetcher as typeof fetch },
+    )).rejects.toThrow('TRUNCATED_COMMON_STRATEGY_HISTORY')
   })
 
   it('fails closed if the ACTIVE transaction version changes while Yahoo data is fetched', async () => {
