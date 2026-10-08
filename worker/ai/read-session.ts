@@ -4,10 +4,7 @@ import type { StoredTransaction } from '../../src/lib/contracts'
 import { buildFxCostPool } from '../../src/lib/fx-cost-pool'
 import { deriveHistoricalNavDates } from '../../src/lib/historical-nav-schedule'
 import { buildCurrentPerformance } from '../../src/lib/performance'
-import {
-  buildSecurityCashFlowSummary,
-  buildSecurityInvestmentPerformanceFromSummary,
-} from '../../src/lib/security-performance'
+import { buildSecurityCashFlowSummary } from '../../src/lib/security-performance'
 import {
   buildHistoricalPerformanceSeries,
   type HistoricalPerformanceSeries,
@@ -192,7 +189,6 @@ export class PortfolioReadSession {
   private marketMetadataPromise?: Promise<MarketMetadata>
   private marketPromise?: Promise<MarketBundle>
   private securityCashFlowSummaryPromise?: Promise<ReturnType<typeof buildSecurityCashFlowSummary>>
-  private securityPerformancePromise?: Promise<ReturnType<typeof buildSecurityInvestmentPerformanceFromSummary>>
 
   constructor(
     readonly db: D1Database,
@@ -242,12 +238,6 @@ export class PortfolioReadSession {
   securityCashFlowSummary(): Promise<ReturnType<typeof buildSecurityCashFlowSummary>> {
     this.securityCashFlowSummaryPromise ??= this.loadSecurityCashFlowSummary()
     return this.securityCashFlowSummaryPromise
-  }
-
-  securityPerformance(): Promise<ReturnType<typeof buildSecurityInvestmentPerformanceFromSummary>> {
-    this.securityPerformancePromise ??= this.securityCashFlowSummary()
-      .then(buildSecurityInvestmentPerformanceFromSummary)
-    return this.securityPerformancePromise
   }
 
   async currentAnalytics() {
