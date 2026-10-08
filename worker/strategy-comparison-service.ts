@@ -20,6 +20,17 @@ const MAX_HISTORY_BOUNDARY_GAP_DAYS = 14
 
 type User = { id: string; email: string }
 
+export async function admitStrategyComparison(
+  rateLimiter: RateLimit | undefined,
+  userId: string,
+): Promise<void> {
+  if (!rateLimiter) return
+  const admission = await rateLimiter.limit({
+    key: `strategy-comparison:${userId}`,
+  })
+  if (!admission.success) throw new Error('STRATEGY_RATE_LIMITED')
+}
+
 function subtractDays(date: string, days: number): string {
   const value = new Date(`${date}T00:00:00Z`)
   value.setUTCDate(value.getUTCDate() - days)
@@ -87,12 +98,7 @@ export async function runStrategyComparison(
 ): Promise<StrategyComparisonResponse> {
   const fetcher = options.fetcher ?? fetch
   const now = options.now ?? new Date()
-  if (options.rateLimiter) {
-    const admission = await options.rateLimiter.limit({
-      key: `strategy-comparison:${user.id}`,
-    })
-    if (!admission.success) throw new Error('STRATEGY_RATE_LIMITED')
-  }
+  await admitStrategyComparison(options.rateLimiter, user.id)
   const portfolio = await getPortfolioState(db, user.id)
   if (!portfolio.activeDatasetId || portfolio.cloudRevision <= 0) {
     throw new Error('NO_ACTIVE_DATASET')

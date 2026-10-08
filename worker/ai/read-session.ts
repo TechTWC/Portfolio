@@ -9,7 +9,7 @@ import type {
   StrategyComparisonRequest,
   StrategyComparisonResponse,
 } from '../../src/lib/strategy-comparison-contracts'
-import { runStrategyComparison } from '../strategy-comparison-service'
+import { admitStrategyComparison, runStrategyComparison } from '../strategy-comparison-service'
 import {
   buildHistoricalPerformanceSeries,
   type HistoricalPerformanceSeries,
@@ -154,6 +154,8 @@ const STRATEGY_RESULT_CACHE_MAX_ENTRIES = 20
 
 type StrategyResultCacheEntry = {
   expiresAt: number
+  activeDatasetId: string | null
+  cloudRevision: number
   result: Promise<StrategyComparisonResponse>
 }
 
@@ -164,13 +166,10 @@ const strategyResultCache = new Map<string, StrategyResultCacheEntry>()
 
 function strategyCacheKey(
   userId: string,
-  state: PortfolioState,
   request: StrategyComparisonRequest,
 ): string {
   return JSON.stringify([
     userId,
-    state.activeDatasetId,
-    state.cloudRevision,
     request.startDate,
     request.endDate,
     request.dcaMonthlyAmountTwd,
@@ -190,7 +189,11 @@ function freshStrategyCacheEntry(key: string): StrategyResultCacheEntry | null {
   return entry
 }
 
-function reserveStrategyCacheEntry(key: string, result: Promise<StrategyComparisonResponse>) {
+function reserveStrategyCacheEntry(
+  key: string,
+  state: PortfolioState,
+  result: Promise<StrategyComparisonResponse>,
+) {
   for (const [candidate, entry] of strategyResultCache) {
     if (entry.expiresAt <= Date.now()) strategyResultCache.delete(candidate)
   }
@@ -201,8 +204,14 @@ function reserveStrategyCacheEntry(key: string, result: Promise<StrategyComparis
   }
   strategyResultCache.set(key, {
     expiresAt: Date.now() + STRATEGY_RESULT_CACHE_TTL_MS,
+    activeDatasetId: state.activeDatasetId,
+    cloudRevision: state.cloudRevision,
     result,
   })
+}
+
+function strategyCacheEntryMatchesState(entry: StrategyResultCacheEntry, state: PortfolioState): boolean {
+  return entry.activeDatasetId === state.activeDatasetId && entry.cloudRevision === state.cloudRevision
 }
 
 function transactionFromRow(row: TransactionRow): StoredTransaction {
@@ -259,16 +268,24 @@ export class PortfolioReadSession {
   ) {}
 
   async strategyComparison(request: StrategyComparisonRequest): Promise<StrategyComparisonResponse> {
+    const key = strategyCacheKey(this.user.id, request)
+    const candidate = freshStrategyCacheEntry(key)
+    if (candidate) {
+      const state = await this.portfolioState()
+      if (strategyCacheEntryMatchesState(candidate, state)) return candidate.result
+      if (strategyResultCache.get(key) === candidate) strategyResultCache.delete(key)
+    }
+
+    // A definite request-cache miss must be admitted before even the portfolio
+    // Revision lookup. This prevents varied MCP filters from bypassing the
+    // shared per-user limit while still allowing a validated exact hit for free.
+    await admitStrategyComparison(this.strategyRateLimiter, this.user.id)
     const state = await this.portfolioState()
-    const key = strategyCacheKey(this.user.id, state, request)
-    const cached = freshStrategyCacheEntry(key)
-    if (cached) return cached.result
 
     const result = runStrategyComparison(this.db, this.user, request, {
       now: this.now,
-      rateLimiter: this.strategyRateLimiter,
     })
-    reserveStrategyCacheEntry(key, result)
+    reserveStrategyCacheEntry(key, state, result)
     try {
       return await result
     } catch (error) {
@@ -278,10 +295,14 @@ export class PortfolioReadSession {
   }
 
   async cachedStrategyComparison(request: StrategyComparisonRequest): Promise<StrategyComparisonResponse> {
-    const state = await this.portfolioState()
-    const key = strategyCacheKey(this.user.id, state, request)
+    const key = strategyCacheKey(this.user.id, request)
     const cached = freshStrategyCacheEntry(key)
     if (!cached) throw new Error('STRATEGY_RESULT_NOT_CACHED')
+    const state = await this.portfolioState()
+    if (!strategyCacheEntryMatchesState(cached, state)) {
+      if (strategyResultCache.get(key) === cached) strategyResultCache.delete(key)
+      throw new Error('STRATEGY_RESULT_NOT_CACHED')
+    }
     return cached.result
   }
 

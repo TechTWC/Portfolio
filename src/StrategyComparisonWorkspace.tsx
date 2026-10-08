@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { api } from './lib/api'
 import type { BootstrapResponse } from './lib/contracts'
+import { createRequestGeneration } from './lib/request-generation'
 import type {
   StrategyComparisonResponse,
   StrategySimulationResult,
@@ -49,27 +50,35 @@ export default function StrategyComparisonWorkspace({ bootstrap }: { bootstrap: 
   const [result, setResult] = useState<StrategyComparisonResponse | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const requestGeneration = useRef(createRequestGeneration())
 
   const weightTotal = useMemo(
     () => allocations.reduce((sum, row) => sum + (Number(row.weightPercent) || 0), 0),
     [allocations],
   )
 
+  function invalidateComparison() {
+    requestGeneration.current.invalidate()
+    setBusy(false)
+    setError('')
+    setResult(null)
+  }
+
   function updateAllocation(index: number, patch: Partial<AllocationRow>) {
     setAllocations((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row))
-    setResult(null)
+    invalidateComparison()
   }
 
   function addAllocation() {
     if (allocations.length >= 5) return
     setAllocations((current) => [...current, { ticker: '', weightPercent: '0' }])
-    setResult(null)
+    invalidateComparison()
   }
 
   function removeAllocation(index: number) {
     if (allocations.length <= 1) return
     setAllocations((current) => current.filter((_, rowIndex) => rowIndex !== index))
-    setResult(null)
+    invalidateComparison()
   }
 
   async function runComparison() {
@@ -97,18 +106,22 @@ export default function StrategyComparisonWorkspace({ bootstrap }: { bootstrap: 
       return
     }
 
+    const generation = requestGeneration.current.begin()
     setBusy(true)
     try {
-      setResult(await api.strategyComparison({
+      const response = await api.strategyComparison({
         startDate,
         endDate,
         dcaMonthlyAmountTwd: amount,
         allocations: normalized,
-      }))
+      })
+      if (requestGeneration.current.isCurrent(generation)) setResult(response)
     } catch (runError) {
-      setError(runError instanceof Error ? runError.message : String(runError))
+      if (requestGeneration.current.isCurrent(generation)) {
+        setError(runError instanceof Error ? runError.message : String(runError))
+      }
     } finally {
-      setBusy(false)
+      if (requestGeneration.current.isCurrent(generation)) setBusy(false)
     }
   }
 
@@ -130,9 +143,9 @@ export default function StrategyComparisonWorkspace({ bootstrap }: { bootstrap: 
       </div>
 
       <div className="strategy-controls">
-        <label><span>開始日</span><input type="date" value={startDate} onChange={(event) => { setStartDate(event.target.value); setResult(null) }} /></label>
-        <label><span>結束日</span><input type="date" value={endDate} onChange={(event) => { setEndDate(event.target.value); setResult(null) }} /></label>
-        <label><span>DCA 每月投入（TWD）</span><input type="number" min="1" step="1000" value={monthlyAmount} onChange={(event) => { setMonthlyAmount(event.target.value); setResult(null) }} /></label>
+        <label><span>開始日</span><input type="date" value={startDate} onChange={(event) => { setStartDate(event.target.value); invalidateComparison() }} /></label>
+        <label><span>結束日</span><input type="date" value={endDate} onChange={(event) => { setEndDate(event.target.value); invalidateComparison() }} /></label>
+        <label><span>DCA 每月投入（TWD）</span><input type="number" min="1" step="1000" value={monthlyAmount} onChange={(event) => { setMonthlyAmount(event.target.value); invalidateComparison() }} /></label>
       </div>
 
       <div className="panel-heading strategy-subheading"><div>

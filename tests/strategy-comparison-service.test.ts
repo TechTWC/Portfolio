@@ -181,6 +181,29 @@ describe('Strategy Comparison input integrity / read-only service', () => {
     expect(fetcher).not.toHaveBeenCalled()
   })
 
+  it('rejects a definite MCP cache miss before reading portfolio state from D1', async () => {
+    const { db, calls } = fixtureDatabase()
+    const rateLimiter = {
+      limit: vi.fn(async () => ({ success: false })),
+    } as unknown as RateLimit
+    const session = new PortfolioReadSession(
+      db,
+      { id: 'mcp-rate-limited-user', email: 'not-real@example.test' },
+      new Date('2026-04-02T00:00:00Z'),
+      rateLimiter,
+    )
+
+    await expect(session.strategyComparison({
+      ...request,
+      dcaMonthlyAmountTwd: 70001,
+    })).rejects.toThrow('STRATEGY_RATE_LIMITED')
+
+    expect(rateLimiter.limit).toHaveBeenCalledWith({
+      key: 'strategy-comparison:mcp-rate-limited-user',
+    })
+    expect(calls).toHaveLength(0)
+  })
+
   it('reuses one completed Yahoo snapshot for MCP query and lineage sessions', async () => {
     const { db } = fixtureDatabase()
     const fetcher = fixtureFetcher()
