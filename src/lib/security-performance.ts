@@ -264,7 +264,10 @@ export function buildSecurityInvestmentPerformanceFromSummary(
     })
   }
 
-  if (flows.length >= 2 && flows[0].date === flows[flows.length - 1].date) {
+  if (
+    summary.securityCashFlows.length >= 2
+    && summary.securityCashFlows[0].date === summary.securityCashFlows[summary.securityCashFlows.length - 1].date
+  ) {
     issues.push({
       code: 'ZERO_TIME_SPAN',
       severity: 'BLOCKING',
