@@ -306,6 +306,7 @@ export class PortfolioReadSession {
 
     const result = runStrategyComparison(this.db, this.user, request, {
       now: this.now,
+      portfolioState: state,
     })
     reserveStrategyCacheEntry(key, state, result)
     try {

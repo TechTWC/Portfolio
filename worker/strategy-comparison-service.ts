@@ -19,6 +19,7 @@ const FX_LOOKBACK_DAYS = 10
 const MAX_HISTORY_BOUNDARY_GAP_DAYS = 14
 
 type User = { id: string; email: string }
+type StrategyPortfolioState = { activeDatasetId: string | null; cloudRevision: number }
 
 export async function admitStrategyComparison(
   rateLimiter: RateLimit | undefined,
@@ -94,12 +95,17 @@ export async function runStrategyComparison(
   db: D1Database,
   user: User,
   request: StrategyComparisonRequest,
-  options: { fetcher?: typeof fetch; now?: Date; rateLimiter?: RateLimit } = {},
+  options: {
+    fetcher?: typeof fetch
+    now?: Date
+    rateLimiter?: RateLimit
+    portfolioState?: StrategyPortfolioState
+  } = {},
 ): Promise<StrategyComparisonResponse> {
   const fetcher = options.fetcher ?? fetch
   const now = options.now ?? new Date()
   await admitStrategyComparison(options.rateLimiter, user.id)
-  const portfolio = await getPortfolioState(db, user.id)
+  const portfolio = options.portfolioState ?? await getPortfolioState(db, user.id)
   if (!portfolio.activeDatasetId || portfolio.cloudRevision <= 0) {
     throw new Error('NO_ACTIVE_DATASET')
   }
@@ -165,6 +171,11 @@ export async function runStrategyComparison(
     if (daysBetween(request.startDate, points[0].date) > MAX_HISTORY_BOUNDARY_GAP_DAYS
         || daysBetween(points.at(-1)!.date, coverageEnd) > MAX_HISTORY_BOUNDARY_GAP_DAYS) {
       throw new Error(`TRUNCATED_STRATEGY_HISTORY: ${history.ticker}`)
+    }
+    for (let index = 1; index < points.length; index += 1) {
+      if (daysBetween(points[index - 1].date, points[index].date) > MAX_HISTORY_BOUNDARY_GAP_DAYS) {
+        throw new Error(`GAPPED_STRATEGY_HISTORY: ${history.ticker}`)
+      }
     }
     return { ticker: history.ticker, points }
   })

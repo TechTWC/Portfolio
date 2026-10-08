@@ -43,15 +43,23 @@ function fixtureDatabase(conflict = false) {
 }
 
 function fixtureFetcher(adjustedClose: Array<number | null> = [100, 110, 121, 133.1]) {
-  const dates = ['2026-01-02', '2026-02-02', '2026-03-02', '2026-04-01']
+  const monthlyDates = ['2026-01-02', '2026-02-02', '2026-03-02', '2026-04-01']
+  const dates: string[] = []
+  for (let date = new Date('2026-01-02T00:00:00Z'); date <= new Date('2026-04-01T00:00:00Z'); date.setUTCDate(date.getUTCDate() + 1)) {
+    if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6) dates.push(date.toISOString().slice(0, 10))
+  }
+  const useMonthlyFixture = adjustedClose.some((value) => value === null)
+  const fixtureDates = useMonthlyFixture ? monthlyDates : dates
+  const adjusted = useMonthlyFixture ? adjustedClose : dates.map((_, index) => 100 + index)
+  const raw = fixtureDates.map((_, index) => 100 + index)
   return vi.fn(async () => new Response(JSON.stringify({
     chart: {
       result: [{
         meta: { currency: 'TWD', exchangeTimezoneName: 'Asia/Taipei' },
-        timestamp: dates.map((date) => Math.floor(Date.parse(date + 'T05:30:00Z') / 1000)),
+        timestamp: fixtureDates.map((date) => Math.floor(Date.parse(date + 'T05:30:00Z') / 1000)),
         indicators: {
-          quote: [{ close: [100, 110, 121, 133.1] }],
-          adjclose: [{ adjclose: adjustedClose }],
+          quote: [{ close: raw }],
+          adjclose: [{ adjclose: adjusted }],
         },
       }],
     },
@@ -128,19 +136,45 @@ describe('Strategy Comparison input integrity / read-only service', () => {
     )).rejects.toThrow('TRUNCATED_STRATEGY_HISTORY')
   })
 
+  it('rejects an omitted interior month instead of rolling its DCA into the next bar', async () => {
+    const { db } = fixtureDatabase()
+    const dates = ['2026-01-02', '2026-03-02', '2026-04-01']
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      chart: { result: [{
+        meta: { currency: 'TWD', exchangeTimezoneName: 'Asia/Taipei' },
+        timestamp: dates.map((date) => Math.floor(Date.parse(date + 'T05:30:00Z') / 1000)),
+        indicators: {
+          quote: [{ close: [100, 121, 133.1] }],
+          adjclose: [{ adjclose: [100, 121, 133.1] }],
+        },
+      }] },
+    }), { status: 200 }))
+
+    await expect(runStrategyComparison(
+      db,
+      { id: 'interior-gap-user', email: 'not-real@example.test' },
+      request,
+      { now: new Date('2026-04-02T00:00:00Z'), fetcher: fetcher as typeof fetch },
+    )).rejects.toThrow('GAPPED_STRATEGY_HISTORY')
+  })
+
   it('rejects insufficient shared-market coverage across individually valid series', async () => {
     const { db } = fixtureDatabase()
     const fetcher = vi.fn(async (url: string) => {
-      const dates = url.includes('/BBB?')
-        ? ['2026-01-03', '2026-02-03', '2026-03-03', '2026-04-01']
-        : ['2026-01-02', '2026-02-02', '2026-03-02', '2026-04-01']
+      const start = new Date(url.includes('/BBB?') ? '2026-01-03T00:00:00Z' : '2026-01-02T00:00:00Z')
+      const end = new Date(url.includes('/BBB?') ? '2026-04-01T00:00:00Z' : '2026-03-31T00:00:00Z')
+      const dates: string[] = []
+      for (const date = new Date(start); date <= end; date.setUTCDate(date.getUTCDate() + 2)) {
+        dates.push(date.toISOString().slice(0, 10))
+      }
+      const prices = dates.map((_, index) => 100 + index)
       return new Response(JSON.stringify({
         chart: { result: [{
           meta: { currency: 'TWD', exchangeTimezoneName: 'Asia/Taipei' },
           timestamp: dates.map((date) => Math.floor(Date.parse(date + 'T05:30:00Z') / 1000)),
           indicators: {
-            quote: [{ close: [100, 110, 120, 130] }],
-            adjclose: [{ adjclose: [100, 110, 120, 130] }],
+            quote: [{ close: prices }],
+            adjclose: [{ adjclose: prices }],
           },
         }] },
       }), { status: 200 })
@@ -224,6 +258,21 @@ describe('Strategy Comparison input integrity / read-only service', () => {
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(secondResult).toBe(firstResult)
     expect(secondResult.marketDataVersion).toBe(firstResult.marketDataVersion)
+  })
+
+  it('binds MCP cache metadata to the same portfolio state used by the simulation', async () => {
+    const { db } = fixtureDatabase(true)
+    vi.stubGlobal('fetch', fixtureFetcher())
+    const user = { id: 'mcp-revision-race-user', email: 'not-real@example.test' }
+    const requestWithUniqueKey = { ...request, dcaMonthlyAmountTwd: 70003 }
+    const querySession = new PortfolioReadSession(db, user, new Date('2026-04-02T00:00:00Z'))
+
+    await expect(querySession.strategyComparison(requestWithUniqueKey))
+      .rejects.toThrow('TRANSACTION_VERSION_CONFLICT')
+
+    const lineageSession = new PortfolioReadSession(db, user, new Date('2026-04-02T00:00:01Z'))
+    await expect(lineageSession.cachedStrategyComparison(requestWithUniqueKey))
+      .rejects.toThrow('STRATEGY_RESULT_NOT_CACHED')
   })
 
   it('reuses one completed Yahoo snapshot for MCP query and lineage sessions', async () => {
