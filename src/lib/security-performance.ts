@@ -59,6 +59,8 @@ export type SecurityInvestmentPerformance = {
   blockingIssueCount: number
 }
 
+export type SecurityCashFlowSummary = Omit<SecurityInvestmentPerformance, 'xirr'>
+
 function clean(value: number): number {
   return Math.abs(value) < EPSILON ? 0 : value
 }
@@ -80,9 +82,9 @@ function aggregateFlows(events: SecurityCashFlow[]): Array<{ date: string; amoun
     .sort((a, b) => a.date.localeCompare(b.date))
 }
 
-export function buildSecurityInvestmentPerformance(
+export function buildSecurityCashFlowSummary(
   input: SecurityInvestmentPerformanceInput,
-): SecurityInvestmentPerformance {
+): SecurityCashFlowSummary {
   const issues: SecurityPerformanceIssue[] = []
   const events: SecurityCashFlow[] = []
   const valuationDate = input.valuationDate
@@ -221,7 +223,29 @@ export function buildSecurityInvestmentPerformance(
     ? null
     : (terminalPositionValueTwd + grossSaleProceedsTwd) / grossPurchasesTwd
 
-  if (grossPurchasesTwd <= EPSILON) {
+  return {
+    valuationDate,
+    complete: issues.length === 0,
+    estimated: true,
+    calculationVersion: SECURITY_INVESTMENT_CALCULATION_VERSION,
+    grossPurchasesTwd,
+    grossSaleProceedsTwd,
+    netSecurityCapitalDeployedTwd,
+    terminalPositionValueTwd,
+    estimatedGainTwd,
+    securityMultiple,
+    securityCashFlows: events,
+    issues,
+    blockingIssueCount: issues.length,
+  }
+}
+
+export function buildSecurityInvestmentPerformanceFromSummary(
+  summary: SecurityCashFlowSummary,
+): SecurityInvestmentPerformance {
+  const issues = [...summary.issues]
+
+  if (summary.grossPurchasesTwd <= EPSILON) {
     issues.push({
       code: 'NO_SECURITY_PURCHASE',
       severity: 'BLOCKING',
@@ -230,7 +254,7 @@ export function buildSecurityInvestmentPerformance(
     })
   }
 
-  const flows = aggregateFlows(events)
+  const flows = aggregateFlows(summary.securityCashFlows)
   if (!flows.some((flow) => flow.amount > EPSILON)) {
     issues.push({
       code: 'NO_POSITIVE_CASH_FLOW',
@@ -272,19 +296,16 @@ export function buildSecurityInvestmentPerformance(
   }
 
   return {
-    valuationDate,
+    ...summary,
     complete: issues.length === 0 && xirr !== null,
-    estimated: true,
-    calculationVersion: SECURITY_INVESTMENT_CALCULATION_VERSION,
-    grossPurchasesTwd,
-    grossSaleProceedsTwd,
-    netSecurityCapitalDeployedTwd,
-    terminalPositionValueTwd,
-    estimatedGainTwd,
-    securityMultiple,
     xirr,
-    securityCashFlows: events,
     issues,
     blockingIssueCount: issues.length,
   }
+}
+
+export function buildSecurityInvestmentPerformance(
+  input: SecurityInvestmentPerformanceInput,
+): SecurityInvestmentPerformance {
+  return buildSecurityInvestmentPerformanceFromSummary(buildSecurityCashFlowSummary(input))
 }
