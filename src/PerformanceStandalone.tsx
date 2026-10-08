@@ -12,7 +12,7 @@ export default function PerformanceStandalone() {
 
   return (
     <>
-      <a className="performance-fixed-link" href="#performance-xirr">證券投入與推估 XIRR</a>
+      <a className="performance-fixed-link" href="#security-investment-summary">證券投入摘要</a>
       <div className="performance-standalone-shell">
         <PerformanceWorkspace key={refreshKey} />
       </div>
