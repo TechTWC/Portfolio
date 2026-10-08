@@ -192,6 +192,9 @@ app.post('/api/strategy-comparison', async (c) => {
     if (message === 'NO_ACTIVE_DATASET') {
       return c.json({ error: '目前沒有 ACTIVE 交易資料，無法建立 Transaction Replay', code: message }, 422)
     }
+    if (message === 'TRANSACTION_VERSION_CONFLICT') {
+      return c.json({ error: '策略比較期間交易版本變更，請重新執行比較', code: message }, 409)
+    }
     return c.json({
       error: `策略比較行情或計算失敗：${message}`,
       code: 'STRATEGY_COMPARISON_UNAVAILABLE',

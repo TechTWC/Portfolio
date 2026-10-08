@@ -13,7 +13,7 @@ import {
   fetchYahooStrategyHistory,
   yahooSymbolForFx,
 } from './market-data-provider'
-import { getActiveTransactions, getPortfolioState } from './repository'
+import { getPortfolioState, getTransactionsForDataset } from './repository'
 
 const FX_LOOKBACK_DAYS = 10
 
@@ -37,7 +37,9 @@ function latestFxOnOrBefore(
     else right = middle
   }
   const bar = bars[left - 1]
-  return bar && Number.isFinite(bar.rawClose) && bar.rawClose > 0 ? bar.rawClose : null
+  if (!bar || !Number.isFinite(bar.rawClose) || bar.rawClose <= 0) return null
+  const ageDays = (Date.parse(date + 'T00:00:00Z') - Date.parse(bar.date + 'T00:00:00Z')) / 86400000
+  return ageDays >= 0 && ageDays <= FX_LOOKBACK_DAYS ? bar.rawClose : null
 }
 
 export async function runStrategyComparison(
@@ -52,7 +54,9 @@ export async function runStrategyComparison(
   if (!portfolio.activeDatasetId || portfolio.cloudRevision <= 0) {
     throw new Error('NO_ACTIVE_DATASET')
   }
-  const transactions = await getActiveTransactions(db, user.id)
+  // Bind the simulation to the exact ACTIVE Dataset observed at the start.
+  // getActiveTransactions() would race a concurrent dataset activation.
+  const transactions = await getTransactionsForDataset(db, user.id, portfolio.activeDatasetId)
   const allocations = request.allocations.map((item) => ({
     ticker: item.ticker.trim().toUpperCase(),
     weight: item.weight,
@@ -108,6 +112,11 @@ export async function runStrategyComparison(
   const status = Object.values(strategies).some((result) => result.status === 'INCOMPLETE')
     ? 'INCOMPLETE' as const
     : 'ESTIMATED' as const
+  const latestPortfolio = await getPortfolioState(db, user.id)
+  if (latestPortfolio.cloudRevision !== portfolio.cloudRevision
+      || latestPortfolio.activeDatasetId !== portfolio.activeDatasetId) {
+    throw new Error('TRANSACTION_VERSION_CONFLICT')
+  }
 
   return {
     calculationVersion: STRATEGY_COMPARISON_VERSION,

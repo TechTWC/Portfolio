@@ -3,9 +3,13 @@ import { z } from 'zod'
 export const STRATEGY_COMPARISON_VERSION = 'strategy-comparison-v0.1' as const
 
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine((date) => {
+    const parsed = new Date(date + 'T00:00:00Z')
+    return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date
+  }, { message: '日期不存在，請使用有效的 YYYY-MM-DD' })
 
 export const strategyAllocationSchema = z.object({
-  ticker: z.string().trim().min(1).max(40),
+  ticker: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9^._-]+$/, '標的代號只能使用 Yahoo 允許的代碼字元'),
   weight: z.number().finite().positive().max(1),
 })
 
@@ -17,6 +21,12 @@ export const strategyComparisonRequestSchema = z.object({
 }).superRefine((value, ctx) => {
   if (value.startDate > value.endDate) {
     ctx.addIssue({ code: 'custom', path: ['endDate'], message: '結束日不得早於開始日' })
+  }
+  const startUtc = Date.parse(value.startDate + 'T00:00:00Z')
+  const endUtc = Date.parse(value.endDate + 'T00:00:00Z')
+  if (Number.isFinite(startUtc) && Number.isFinite(endUtc)
+      && endUtc - startUtc > 30 * 366 * 86400000) {
+    ctx.addIssue({ code: 'custom', path: ['startDate'], message: '比較期間上限為 30 年' })
   }
   const tickers = value.allocations.map((item) => item.ticker.trim().toUpperCase())
   if (new Set(tickers).size !== tickers.length) {
