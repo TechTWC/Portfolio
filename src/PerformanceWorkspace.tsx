@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api } from './lib/api'
 import { buildCurrentPerformance } from './lib/performance'
 import { staleMarketDataMessage } from './lib/market-data-freshness'
-import { buildSecurityInvestmentPerformance } from './lib/security-performance'
+import { buildSecurityCashFlowSummary } from './lib/security-performance'
 import { isPositionValuationComplete } from './lib/valuation'
 import type { ValuationBootstrapResponse } from './lib/valuation-contracts'
 
@@ -53,7 +53,7 @@ export default function PerformanceWorkspace() {
       .catch((loadError) => setError(loadError instanceof Error ? loadError.message : String(loadError)))
   }, [])
 
-  const estimated = useMemo(() => buildSecurityInvestmentPerformance({
+  const estimated = useMemo(() => buildSecurityCashFlowSummary({
     transactions: valuation?.transactions ?? [],
     valuationDate: valuation?.activeSnapshot?.valuationDate ?? null,
     positionValuationComplete: valuation?.valuation
@@ -72,11 +72,11 @@ export default function PerformanceWorkspace() {
   const loading = !valuation
 
   return (
-    <section className="panel" id="performance-xirr">
+    <section className="panel" id="security-investment-summary">
       <div className="panel-heading"><div>
-        <span>ESTIMATED SECURITY RETURN · v0.1</span>
-        <h2>證券投入與推估 XIRR</h2>
-        <p>依買賣紀錄估算證券資金的年化效率：買進為投入、賣出為回收，期末加入未平倉持股市值。</p>
+        <span>ESTIMATED SECURITY CASH FLOW · v0.1</span>
+        <h2>證券投入摘要</h2>
+        <p>依買賣紀錄與 ACTIVE 持倉市值整理證券投入、回收、期末持倉、推估累計損益與資金倍數；目前不計算 Security XIRR。</p>
       </div></div>
 
       <div className="banner info">
@@ -88,8 +88,8 @@ export default function PerformanceWorkspace() {
       {valuation?.freshness === 'STALE' && (
         <div className="banner error">
           {valuation.freshnessReason === 'TRANSACTION_VERSION'
-            ? `XIRR 鎖定交易 v${valuation.activeSnapshot?.transactionRevision ?? '—'}；目前交易為 v${valuation.currentTransactionRevision}。結果可重現但已過期，重新啟用估值前請勿視為目前報酬。`
-            : `${staleMarketDataMessage(valuation.activeSnapshot?.valuationDate, valuation.valuationAgeDays)}；XIRR 不得視為目前報酬。`}
+            ? `證券投入摘要鎖定交易 v${valuation.activeSnapshot?.transactionRevision ?? '—'}；目前交易為 v${valuation.currentTransactionRevision}。結果可重現但已過期，重新啟用估值前請勿視為目前狀態。`
+            : `${staleMarketDataMessage(valuation.activeSnapshot?.valuationDate, valuation.valuationAgeDays)}；證券投入摘要不得視為目前狀態。`}
         </div>
       )}
       {loading ? <div className="empty-state">正在載入交易與估值資料…</div> : (
@@ -98,7 +98,7 @@ export default function PerformanceWorkspace() {
             <Metric
               label="推估狀態"
               value={valuation?.freshness === 'STALE' ? 'STALE' : estimated.complete ? '可計算' : '不完整'}
-              hint={valuation?.freshness === 'STALE' ? (valuation.freshnessReason === 'TRANSACTION_VERSION' ? `綁定交易 v${valuation.activeSnapshot?.transactionRevision ?? '—'}` : `${valuation.valuationAgeDays ?? '—'} 天前`) : estimated.complete ? '買賣紀錄與期末持倉可年化' : `${estimated.blockingIssueCount} 項阻擋問題`}
+              hint={valuation?.freshness === 'STALE' ? (valuation.freshnessReason === 'TRANSACTION_VERSION' ? `綁定交易 v${valuation.activeSnapshot?.transactionRevision ?? '—'}` : `${valuation.valuationAgeDays ?? '—'} 天前`) : estimated.complete ? '買賣紀錄與期末持倉可建立摘要' : `${estimated.blockingIssueCount} 項阻擋問題`}
             />
             <Metric label="推估截止日" value={estimated.valuationDate ?? '—'} hint="使用 ACTIVE 估值日" />
             <Metric label="累計買進" value={formatAmount(estimated.grossPurchasesTwd)} hint="交易金額＋費用，以 TWD 換算" />
@@ -112,21 +112,20 @@ export default function PerformanceWorkspace() {
             <Metric label="證券資金倍數" value={formatMultiple(estimated.securityMultiple)} hint="不考慮各次投入時間" />
           </div>
 
-          <div className="metrics-grid performance-xirr-highlight">
-            <Metric label="推估年化 XIRR" value={formatPercent(estimated.xirr)} hint="Actual/365；證券投入的資金加權年化效率" />
+          <div className="metrics-grid">
             <Metric label="證券現金流事件" value={estimated.securityCashFlows.length.toLocaleString()} hint="買進、賣出與期末持倉市值" />
           </div>
 
           <div className="panel-heading"><div>
             <span>ESTIMATED SECURITY CASH FLOWS</span>
-            <h2>推估 XIRR 使用的證券現金流</h2>
+            <h2>證券投入現金流</h2>
             <p>買進顯示為負數；賣出淨收入及期末持倉市值顯示為正數。日期一律先採交易日。</p>
           </div></div>
 
           {estimated.securityCashFlows.length === 0 ? <div className="empty-state">目前沒有可用的證券現金流。</div> : (
             <div className="table-wrap"><table>
               <thead><tr>
-                <th>日期</th><th>類型</th><th className="numeric">推估 XIRR 現金流（TWD）</th><th>來源</th>
+                <th>日期</th><th>類型</th><th className="numeric">證券現金流（TWD）</th><th>來源</th>
               </tr></thead>
               <tbody>{estimated.securityCashFlows.map((flow, index) => (
                 <tr key={`${flow.date}-${flow.kind}-${index}`}>
@@ -140,12 +139,12 @@ export default function PerformanceWorkspace() {
           )}
 
           <div className="empty-state">
-            推估 XIRR 只衡量買賣紀錄所呈現的證券資金效率；不能替代完整總報酬、TWR、基準比較或最大回撤。
+            此摘要目前不計算 Security XIRR；也不能替代完整總報酬、TWR、基準比較或最大回撤。
           </div>
 
           {estimated.issues.length > 0 && (
             <div className="rejected-list">
-              <strong>推估績效尚不能完整計算</strong>
+              <strong>證券投入摘要尚不能完整建立</strong>
               <ul>{estimated.issues.map((issue) => (
                 <li key={`${issue.code}-${issue.sourceRowNumbers.join('-')}`}>
                   {issue.code}：{issue.message}
@@ -162,7 +161,7 @@ export default function PerformanceWorkspace() {
               <Metric label="正式外部現金流" value={official.externalCashFlows.length.toLocaleString()} hint="證券買賣不視為帳戶外部金流" />
             </div>
             <p className="empty-state">
-              這個口徑保留供未來補齊銀行／證券帳戶真實入出金後使用。目前不會用推估證券 XIRR 冒充正式帳戶 XIRR。
+              這個口徑保留供未來補齊銀行／證券帳戶真實入出金後使用。目前不會用證券投入摘要冒充正式帳戶 XIRR。
             </p>
             {official.externalCashFlows.length > 0 && (
               <div className="table-wrap"><table>
