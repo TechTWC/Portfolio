@@ -212,6 +212,20 @@ describe('estimated security investment XIRR', () => {
     }))
   })
 
+  it('reports ZERO_TIME_SPAN when purchase and terminal valuation share the same date', () => {
+    const result = calculate([
+      row({ tradeDate: '2026-01-01', amountForeign: 100, price: 100 }),
+    ], {
+      valuationDate: '2026-01-01',
+      terminalPositionValueTwd: 110,
+    })
+
+    expect(result.complete).toBe(false)
+    expect(result.xirr).toBeNull()
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: 'ZERO_TIME_SPAN' }))
+    expect(result.issues).not.toContainEqual(expect.objectContaining({ code: 'XIRR_NOT_FOUND' }))
+  })
+
   it('blocks multiple mathematical roots instead of selecting one silently', () => {
     const result = calculate([
       row({ tradeDate: '2026-01-01', amountForeign: 100 }),
