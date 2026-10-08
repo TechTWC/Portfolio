@@ -5,6 +5,8 @@ import { buildFxCostPool } from '../../src/lib/fx-cost-pool'
 import { deriveHistoricalNavDates } from '../../src/lib/historical-nav-schedule'
 import { buildCurrentPerformance } from '../../src/lib/performance'
 import { buildSecurityCashFlowSummary } from '../../src/lib/security-performance'
+import type { StrategyComparisonRequest } from '../../src/lib/strategy-comparison-contracts'
+import { runStrategyComparison } from '../strategy-comparison-service'
 import {
   buildHistoricalPerformanceSeries,
   type HistoricalPerformanceSeries,
@@ -195,6 +197,10 @@ export class PortfolioReadSession {
     readonly user: AiUser,
     readonly now = new Date(),
   ) {}
+
+  strategyComparison(request: StrategyComparisonRequest) {
+    return runStrategyComparison(this.db, this.user, request, { now: this.now })
+  }
 
   portfolioState(): Promise<PortfolioState> {
     this.statePromise ??= this.loadPortfolioState()

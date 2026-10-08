@@ -28,7 +28,7 @@ export type ResourceRegistration<TSession> = {
   currencySemantics: string
   dataQualitySemantics: string
   lineageAvailability: string
-  readModel: (context: AiRequestContext<TSession>) => Promise<ResourceReadResult>
+  readModel: (context: AiRequestContext<TSession>, filters: QueryFilters) => Promise<ResourceReadResult>
   applyFilters?: (rows: DataRow[], filters: QueryFilters) => DataRow[]
 }
 
@@ -172,7 +172,7 @@ export class ResourceRegistry<TSession> {
       offset = cursor.offset
     }
 
-    const read = await registration.readModel(context)
+    const read = await registration.readModel(context, filters)
     let rows = registration.applyFilters
       ? registration.applyFilters(read.rows, filters)
       : read.rows
@@ -201,8 +201,11 @@ export class ResourceRegistry<TSession> {
   async lineage(
     name: string,
     context: AiRequestContext<TSession>,
+    filters: QueryFilters = {},
   ): Promise<DataLineage> {
-    return (await this.get(name).readModel(context)).lineage
+    const registration = this.get(name)
+    assertOnlyAllowed(Object.keys(filters), registration.allowedFilters, 'INVALID_FILTER', 'filters')
+    return (await registration.readModel(context, filters)).lineage
   }
 
   private get(name: string): ResourceRegistration<TSession> {

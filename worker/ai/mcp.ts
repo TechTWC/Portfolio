@@ -140,7 +140,7 @@ export function createPortfolioMcpHandler(env: Bindings, user: AiUser, request: 
       if (!name) throw new DataPlatformError('INVALID_LINEAGE_TARGET', 'target.name 為必填')
       const value = await audited('get_data_lineage', `${target.kind}:${name}`, async () => ({
         value: target.kind === 'resource'
-          ? await dataRegistry.lineage(name, context)
+          ? await dataRegistry.lineage(name, context, target.parameters as Record<string, JsonScalar> | undefined ?? {})
           : await metricRegistry.lineage(name, target.parameters as Record<string, JsonScalar> | undefined ?? {}, context),
         rowCount: 1,
       }))
