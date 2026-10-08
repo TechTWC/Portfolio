@@ -4,7 +4,10 @@ import type { StoredTransaction } from '../../src/lib/contracts'
 import { buildFxCostPool } from '../../src/lib/fx-cost-pool'
 import { deriveHistoricalNavDates } from '../../src/lib/historical-nav-schedule'
 import { buildCurrentPerformance } from '../../src/lib/performance'
-import { buildSecurityInvestmentPerformance } from '../../src/lib/security-performance'
+import {
+  buildSecurityCashFlowSummary,
+  buildSecurityInvestmentPerformanceFromSummary,
+} from '../../src/lib/security-performance'
 import {
   buildHistoricalPerformanceSeries,
   type HistoricalPerformanceSeries,
@@ -188,7 +191,8 @@ export class PortfolioReadSession {
   private valuationPromise?: Promise<ValuationBundle>
   private marketMetadataPromise?: Promise<MarketMetadata>
   private marketPromise?: Promise<MarketBundle>
-  private securityPerformancePromise?: Promise<ReturnType<typeof buildSecurityInvestmentPerformance>>
+  private securityCashFlowSummaryPromise?: Promise<ReturnType<typeof buildSecurityCashFlowSummary>>
+  private securityPerformancePromise?: Promise<ReturnType<typeof buildSecurityInvestmentPerformanceFromSummary>>
 
   constructor(
     readonly db: D1Database,
@@ -235,8 +239,14 @@ export class PortfolioReadSession {
     return this.marketMetadataPromise
   }
 
-  securityPerformance(): Promise<ReturnType<typeof buildSecurityInvestmentPerformance>> {
-    this.securityPerformancePromise ??= this.loadSecurityPerformance()
+  securityCashFlowSummary(): Promise<ReturnType<typeof buildSecurityCashFlowSummary>> {
+    this.securityCashFlowSummaryPromise ??= this.loadSecurityCashFlowSummary()
+    return this.securityCashFlowSummaryPromise
+  }
+
+  securityPerformance(): Promise<ReturnType<typeof buildSecurityInvestmentPerformanceFromSummary>> {
+    this.securityPerformancePromise ??= this.securityCashFlowSummary()
+      .then(buildSecurityInvestmentPerformanceFromSummary)
     return this.securityPerformancePromise
   }
 
@@ -275,9 +285,9 @@ export class PortfolioReadSession {
     }
   }
 
-  private async loadSecurityPerformance(): Promise<ReturnType<typeof buildSecurityInvestmentPerformance>> {
+  private async loadSecurityCashFlowSummary(): Promise<ReturnType<typeof buildSecurityCashFlowSummary>> {
     const valuationBundle = await this.valuationBundle()
-    return buildSecurityInvestmentPerformance({
+    return buildSecurityCashFlowSummary({
       transactions: valuationBundle.transactions,
       valuationDate: valuationBundle.snapshot?.valuation_date ?? null,
       positionValuationComplete: valuationBundle.valuation
