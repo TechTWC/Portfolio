@@ -163,6 +163,7 @@ type StrategyResultCacheEntry = {
 // small, short-lived, user/version-scoped single-flight cache so both calls bind
 // to the same completed Yahoo snapshot instead of launching a second simulation.
 const strategyResultCache = new Map<string, StrategyResultCacheEntry>()
+const strategyResultInFlight = new Map<string, Promise<StrategyComparisonResponse>>()
 
 function strategyCacheKey(
   userId: string,
@@ -269,6 +270,9 @@ export class PortfolioReadSession {
 
   async strategyComparison(request: StrategyComparisonRequest): Promise<StrategyComparisonResponse> {
     const key = strategyCacheKey(this.user.id, request)
+    const active = strategyResultInFlight.get(key)
+    if (active) return active
+
     const candidate = freshStrategyCacheEntry(key)
     if (candidate) {
       const state = await this.portfolioState()
@@ -276,6 +280,24 @@ export class PortfolioReadSession {
       if (strategyResultCache.get(key) === candidate) strategyResultCache.delete(key)
     }
 
+    // A second caller can arrive while a stale candidate is being validated.
+    // Recheck, then synchronously reserve the whole admission/D1/Yahoo operation
+    // before its first await so identical cold requests remain single-flight.
+    const rechecked = strategyResultInFlight.get(key)
+    if (rechecked) return rechecked
+    const result = this.runUncachedStrategyComparison(key, request)
+    strategyResultInFlight.set(key, result)
+    try {
+      return await result
+    } finally {
+      if (strategyResultInFlight.get(key) === result) strategyResultInFlight.delete(key)
+    }
+  }
+
+  private async runUncachedStrategyComparison(
+    key: string,
+    request: StrategyComparisonRequest,
+  ): Promise<StrategyComparisonResponse> {
     // A definite request-cache miss must be admitted before even the portfolio
     // Revision lookup. This prevents varied MCP filters from bypassing the
     // shared per-user limit while still allowing a validated exact hit for free.

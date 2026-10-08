@@ -204,6 +204,28 @@ describe('Strategy Comparison input integrity / read-only service', () => {
     expect(calls).toHaveLength(0)
   })
 
+  it('keeps concurrent identical MCP cache misses single-flight across sessions', async () => {
+    const { db } = fixtureDatabase()
+    const fetcher = fixtureFetcher()
+    vi.stubGlobal('fetch', fetcher)
+    const rateLimiter = {
+      limit: vi.fn(async () => ({ success: true })),
+    } as unknown as RateLimit
+    const user = { id: 'mcp-single-flight-user', email: 'not-real@example.test' }
+    const first = new PortfolioReadSession(db, user, new Date('2026-04-02T00:00:00Z'), rateLimiter)
+    const second = new PortfolioReadSession(db, user, new Date('2026-04-02T00:00:00Z'), rateLimiter)
+
+    const [firstResult, secondResult] = await Promise.all([
+      first.strategyComparison(request),
+      second.strategyComparison(request),
+    ])
+
+    expect(rateLimiter.limit).toHaveBeenCalledTimes(1)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(secondResult).toBe(firstResult)
+    expect(secondResult.marketDataVersion).toBe(firstResult.marketDataVersion)
+  })
+
   it('reuses one completed Yahoo snapshot for MCP query and lineage sessions', async () => {
     const { db } = fixtureDatabase()
     const fetcher = fixtureFetcher()
