@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import closing
 import os
 import sqlite3
 import tempfile
@@ -54,7 +55,7 @@ class OfflineRecoveryDrillTests(unittest.TestCase):
             self.assertEqual((self.backup / SQL_NAME).stat().st_mode & 0o077, 0)
             self.assertEqual((self.backup / MANIFEST_NAME).stat().st_mode & 0o077, 0)
             self.assertEqual(self.backup.stat().st_mode & 0o077, 0)
-        with open_existing_readonly(self.target) as db:
+        with closing(open_existing_readonly(self.target)) as db:
             self.assertEqual(database_fingerprint(db), actual)
             self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
@@ -123,6 +124,18 @@ class OfflineRecoveryDrillTests(unittest.TestCase):
         with self.assertRaisesRegex(RecoveryGateError, "missing"):
             restore_validated(self.backup, self.target)
         self.assertFalse(self.target.exists())
+
+    def test_refuse_export_of_non_synthetic_user_data(self):
+        create_synthetic_database(self.source)
+        with closing(sqlite3.connect(self.source)) as db:
+            db.execute(
+                "UPDATE users SET email=? WHERE id='usr_synthetic_fixture'",
+                ("not-a-fixture@example.com",),
+            )
+            db.commit()
+        with self.assertRaisesRegex(RecoveryGateError, "Non-synthetic"):
+            export_synthetic(self.source, self.backup)
+        self.assertFalse(self.backup.exists())
 
     def test_existing_target_never_overwritten(self):
         self.make_backup()
