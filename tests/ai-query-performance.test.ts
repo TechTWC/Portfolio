@@ -332,6 +332,7 @@ describe('AI on-demand query performance', () => {
       snapshotDatasetId: 'dataset-current',
     }), { id: 'cash-flow-only-user', email: 'owner@example.test' }, new Date('2026-01-02T00:00:00Z'))
     const securityCashFlowSummary = vi.spyOn(session, 'securityCashFlowSummary')
+    const currentAnalytics = vi.spyOn(session, 'currentAnalytics')
 
     const result = await withinTimeout(createDataRegistry().query('security_cash_flows', {
       sort: { field: 'date', direction: 'asc' },
@@ -339,6 +340,7 @@ describe('AI on-demand query performance', () => {
 
     expect(result.rows).toHaveLength(2)
     expect(securityCashFlowSummary).toHaveBeenCalledTimes(1)
+    expect(currentAnalytics).not.toHaveBeenCalled()
   })
 
   it('keeps stale security cash flows bound to the valuation snapshot dataset and lineage', async () => {
