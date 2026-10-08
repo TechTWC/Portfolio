@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -127,7 +128,7 @@ def create_synthetic_database(path: Path, scenario: str = "populated",
     if path.exists():
         raise RecoveryGateError("Will not overwrite an existing source")
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db:
         db.execute("PRAGMA foreign_keys=ON")
         for item in migration_manifest(root):
             db.executescript((root / "migrations" / item["file"]).read_text("utf-8"))
@@ -234,6 +235,19 @@ def insert_synthetic_rows(db: sqlite3.Connection) -> None:
     )
 
 
+
+def assert_synthetic_identity(connection: sqlite3.Connection) -> None:
+    """Never export a real user's data through this synthetic-only drill."""
+    rows = connection.execute("SELECT id, email FROM users ORDER BY id").fetchall()
+    if rows not in ([], [("usr_synthetic_fixture", "fixture@invalid.example")]):
+        raise RecoveryGateError("Non-synthetic users are forbidden in this drill")
+    if not rows and any(
+        connection.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone()
+        for table in names(connection)
+    ):
+        raise RecoveryGateError("An empty fixture must contain no application rows")
+
+
 def private_output_directory(directory: Path, root: Path = ROOT) -> None:
     target = directory.resolve()
     repo = root.resolve()
@@ -263,7 +277,8 @@ def export_synthetic(source: Path, evidence: Path, root: Path = ROOT) -> dict:
     """Never accepts a Cloudflare endpoint; source is a local SQLite file."""
     private_output_directory(evidence, root)
     try:
-        with open_existing_readonly(source) as db:
+        with closing(open_existing_readonly(source)) as db:
+            assert_synthetic_identity(db)
             fingerprint = database_fingerprint(db)
             dump = ("\n".join(db.iterdump()) + "\n").encode("utf-8")
         manifest = {
@@ -315,7 +330,7 @@ def restore_validated(evidence: Path, target: Path, root: Path = ROOT) -> dict:
     os.close(fd)
     partial = Path(temporary)
     try:
-        with sqlite3.connect(partial) as db:
+        with closing(sqlite3.connect(partial)) as db:
             db.execute("PRAGMA foreign_keys=OFF")
             db.executescript(sql.decode("utf-8"))
             db.execute("PRAGMA foreign_keys=ON")
@@ -344,7 +359,7 @@ def run_synthetic_drill(scenario: str = "populated", output_dir: Path | None = N
         # Never restore into the fixture source or any existing database.
         restored = scratch / "restored.sqlite"
         fingerprint = restore_validated(evidence, restored)
-        with open_existing_readonly(restored) as db:
+        with closing(open_existing_readonly(restored)) as db:
             if database_fingerprint(db) != fingerprint:
                 raise RecoveryGateError("Final read-only verification failed")
         return {
