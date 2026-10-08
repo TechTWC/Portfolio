@@ -1,7 +1,7 @@
 import { buildPortfolioAccounting } from '../../src/lib/accounting'
 import { buildCashFundingLedger } from '../../src/lib/cash-ledger'
 import { buildFxCostPool } from '../../src/lib/fx-cost-pool'
-import { SECURITY_INVESTMENT_CALCULATION_VERSION } from '../../src/lib/security-performance'
+import { SECURITY_CASH_FLOW_CALCULATION_VERSION } from '../../src/lib/security-performance'
 import {
   HISTORICAL_PERFORMANCE_CALCULATION_VERSION,
   UNSUPPORTED_TOTAL_RETURN_COVERAGE_MESSAGE,
@@ -307,7 +307,7 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
 
   registry.register(resource({
     name: 'security_cash_flows',
-    description: 'Estimated TWD security cash flows from trades and terminal open-position value; can be used as security_xirr inputs only when that metric is explicitly requested',
+    description: 'Estimated TWD security cash flows from trades and terminal open-position value; no Security XIRR is calculated or exposed',
     fields: [
       field('date', 'date', 'Trade date or ACTIVE valuation date', { date_semantics: 'Trade date is used as the estimated settlement date' }),
       field('type', 'enum', 'Estimated security cash-flow type', { enum_values: ['PURCHASE', 'SALE', 'TERMINAL_POSITION_VALUE'] }),
@@ -343,7 +343,7 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
         lineage: await lineage(context, dataQuality, {
           asOf: securityCashFlowSummary.valuationDate,
           resourceVersion: RESOURCE_VERSION,
-          calculationVersion: SECURITY_INVESTMENT_CALCULATION_VERSION,
+          calculationVersion: SECURITY_CASH_FLOW_CALCULATION_VERSION,
           transactionRevision: analytics.valuationBundle.snapshot?.transaction_revision,
           sourceVersion: analytics.valuationBundle.snapshot?.parser_version,
         }),
@@ -692,41 +692,6 @@ export function createMetricRegistry(): MetricRegistry<PortfolioReadSession> {
       },
     })
   }
-
-  registry.register({
-    name: 'security_xirr',
-    description: 'Estimated money-weighted annualized return on security capital using trade-date purchases, net sale proceeds, and terminal open-position market value; excludes unrecorded dividends and corporate actions',
-    unit: 'decimal',
-    calculationVersion: SECURITY_INVESTMENT_CALCULATION_VERSION,
-    allowedParameters: [],
-    calculate: async (context) => {
-      const [analytics, securityPerformance] = await Promise.all([
-        context.session.currentAnalytics(),
-        context.session.securityPerformance(),
-      ])
-      const issues = domainIssues(securityPerformance.issues)
-      const dataQuality = estimatedSecurityQuality(
-        securityPerformance.complete,
-        analytics.valuationBundle.freshness,
-        [...analytics.valuationBundle.freshnessIssues, ...issues],
-      )
-      const asOf = securityPerformance.valuationDate
-      return metricResult({
-        metric: 'security_xirr',
-        value: dataQuality.status === 'ESTIMATED' ? securityPerformance.xirr : null,
-        unit: 'decimal',
-        period: { from: securityPerformance.securityCashFlows[0]?.date ?? null, to: asOf },
-        as_of: asOf,
-        status: dataQuality.status,
-        calculation_version: SECURITY_INVESTMENT_CALCULATION_VERSION,
-        issues: dataQuality.issues,
-        lineage: metricLineage(context, dataQuality, SECURITY_INVESTMENT_CALCULATION_VERSION, asOf, {
-          transactionRevision: analytics.valuationBundle.snapshot?.transaction_revision,
-          sourceVersion: analytics.valuationBundle.snapshot?.parser_version,
-        }),
-      })
-    },
-  })
 
   registry.register({
     name: 'xirr',
