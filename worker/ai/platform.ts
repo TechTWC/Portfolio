@@ -320,15 +320,15 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
     allowedSort: ['date', 'type'],
     applyFilters: (rows, filters) => filterRows(rows, filters, { type: 'type' }, 'date'),
     readModel: async (context) => {
-      const [analytics, securityCashFlowSummary] = await Promise.all([
-        context.session.currentAnalytics(),
+      const [valuationBundle, securityCashFlowSummary] = await Promise.all([
+        context.session.valuationBundle(),
         context.session.securityCashFlowSummary(),
       ])
       const issues = domainIssues(securityCashFlowSummary.issues)
       const dataQuality = estimatedSecurityQuality(
         securityCashFlowSummary.complete,
-        analytics.valuationBundle.freshness,
-        [...analytics.valuationBundle.freshnessIssues, ...issues],
+        valuationBundle.freshness,
+        [...valuationBundle.freshnessIssues, ...issues],
       )
       return {
         rows: securityCashFlowSummary.securityCashFlows.map((flow) => ({
@@ -344,8 +344,8 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
           asOf: securityCashFlowSummary.valuationDate,
           resourceVersion: RESOURCE_VERSION,
           calculationVersion: SECURITY_CASH_FLOW_CALCULATION_VERSION,
-          transactionRevision: analytics.valuationBundle.snapshot?.transaction_revision,
-          sourceVersion: analytics.valuationBundle.snapshot?.parser_version,
+          transactionRevision: valuationBundle.snapshot?.transaction_revision,
+          sourceVersion: valuationBundle.snapshot?.parser_version,
         }),
       }
     },
