@@ -97,7 +97,7 @@ export default function PerformanceWorkspace() {
           <div className="metrics-grid">
             <Metric
               label="推估狀態"
-              value={valuation?.freshness === 'STALE' ? 'STALE' : estimated.complete ? '可計算' : '不完整'}
+              value={valuation?.freshness === 'STALE' ? 'STALE' : estimated.complete ? '可建立' : '不完整'}
               hint={valuation?.freshness === 'STALE' ? (valuation.freshnessReason === 'TRANSACTION_VERSION' ? `綁定交易 v${valuation.activeSnapshot?.transactionRevision ?? '—'}` : `${valuation.valuationAgeDays ?? '—'} 天前`) : estimated.complete ? '買賣紀錄與期末持倉可建立摘要' : `${estimated.blockingIssueCount} 項阻擋問題`}
             />
             <Metric label="推估截止日" value={estimated.valuationDate ?? '—'} hint="使用 ACTIVE 估值日" />
