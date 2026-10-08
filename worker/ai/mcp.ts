@@ -148,8 +148,5 @@ export function createPortfolioMcpHandler(env: Bindings, user: AiUser, request: 
     })
 
     return server
-  }, {
-    route: '/mcp',
-    corsOptions: false,
   })
 }
