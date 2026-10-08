@@ -2,6 +2,8 @@ import { buildPortfolioAccounting } from '../../src/lib/accounting'
 import { buildCashFundingLedger } from '../../src/lib/cash-ledger'
 import { buildFxCostPool } from '../../src/lib/fx-cost-pool'
 import { SECURITY_CASH_FLOW_CALCULATION_VERSION } from '../../src/lib/security-performance'
+import { STRATEGY_COMPARISON_VERSION } from '../../src/lib/strategy-comparison-contracts'
+import { parseStrategyQueryFilters, STRATEGY_QUERY_FILTERS } from './strategy-request'
 import {
   HISTORICAL_PERFORMANCE_CALCULATION_VERSION,
   UNSUPPORTED_TOTAL_RETURN_COVERAGE_MESSAGE,
@@ -542,6 +544,94 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
       },
     }))
   }
+
+
+  registry.register(resource({
+    name: 'strategy_comparison',
+    description: 'Read-only DCA / equal-principal Lump Sum / actual SECURITY transaction replay; filters: start_date (YYYY-MM-DD), end_date (YYYY-MM-DD), dca_monthly_amount_twd (TWD), allocations (TICKER:PERCENT comma-separated, e.g. 0050.TW:50,2330.TW:50). Fetches external Yahoo adjusted-close proxy; never an official account metric.',
+    fields: [
+      field('mode', 'enum', 'Simulated deployment mode', { enum_values: ['DCA', 'LUMP_SUM', 'TRANSACTION_REPLAY'] }),
+      field('status', 'enum', 'Strategy result quality', { enum_values: ['ESTIMATED', 'INCOMPLETE'] }),
+      field('start_date', 'date', 'First executed common market date', { nullable: true }),
+      field('end_date', 'date', 'Last observed common market date', { nullable: true }),
+      field('gross_contributions_twd', 'number', 'Total simulated contributions in TWD', { unit: 'TWD' }),
+      field('gross_withdrawals_twd', 'number', 'Total simulated withdrawals in TWD', { unit: 'TWD' }),
+      field('terminal_value_twd', 'number', 'Simulated terminal market value in TWD', { nullable: true, unit: 'TWD' }),
+      field('estimated_gain_twd', 'number', 'Estimated gain or loss in TWD', { nullable: true, unit: 'TWD' }),
+      field('money_multiple', 'number', 'Terminal value plus withdrawals divided by gross contributions', { nullable: true }),
+      field('xirr', 'number', 'Simulated dated flow XIRR, not official account or Security XIRR', { nullable: true, unit: 'decimal' }),
+      field('cumulative_twr_proxy', 'number', 'Simulated unitized growth proxy, not official TWR', { nullable: true, unit: 'decimal' }),
+      field('annualized_twr_proxy', 'number', 'Annualized simulated unitized growth proxy', { nullable: true, unit: 'decimal' }),
+      field('maximum_drawdown', 'number', 'Maximum simulated growth-index drawdown', { nullable: true, unit: 'decimal' }),
+      field('recovery_date', 'date', 'First recovery date after maximum drawdown trough', { nullable: true }),
+      field('execution_count', 'number', 'Number of executed strategy cash-flow events', { unit: 'count' }),
+      field('issue_codes', 'string', 'Comma-separated machine-readable calculation limitation codes'),
+    ],
+    allowedFilters: [...STRATEGY_QUERY_FILTERS],
+    allowedSort: ['mode'],
+    dateSemantics: 'Start/end filters are inclusive YYYY-MM-DD; orders execute on the next shared executable trading date, and end_date reports actual last shared market date.',
+    currencySemantics: 'Amounts are converted to TWD using available historical FX; adjusted close is a total-return proxy and not official raw-close valuation.',
+    readModel: async (context, filters) => {
+      const request = parseStrategyQueryFilters(filters)
+      let result: Awaited<ReturnType<PortfolioReadSession['strategyComparison']>>
+      try {
+        result = await context.session.strategyComparison(request)
+      } catch (error) {
+        if (error instanceof Error && error.message === 'NO_ACTIVE_DATASET') {
+          throw new DataPlatformError('NO_ACTIVE_DATASET', '目前沒有有效交易資料，無法執行 Transaction Replay')
+        }
+        if (error instanceof Error && error.message === 'TRANSACTION_VERSION_CONFLICT') {
+          throw new DataPlatformError('TRANSACTION_VERSION_CONFLICT', '計算期間交易版本已改變，請重新查詢')
+        }
+        throw new DataPlatformError('STRATEGY_COMPARISON_UNAVAILABLE', '策略行情或計算服務不可用，請稍後重新查詢')
+      }
+      const all = [
+        result.strategies.dca,
+        result.strategies.lumpSum,
+        result.strategies.transactionReplay,
+      ]
+      const issues: DataQualityIssue[] = [
+        issue('STRATEGY_ADJUSTED_CLOSE_PROXY', 'Yahoo adjusted close 是股利／公司行動的推估代理，不等同正式帳戶估值', { severity: 'WARNING' }),
+        issue('STRATEGY_COSTS_EXCLUDED', '策略模擬未計手續費、交易稅、滑價、融資及槓桿', { severity: 'WARNING' }),
+        issue('TRANSACTION_REPLAY_NOT_PME', '交易重播使用證券買賣資金路徑，不能解釋為正式入出金或標準 PME', { severity: 'WARNING' }),
+        ...all.flatMap((entry) => entry.issues.map((reason) =>
+          issue(reason.code, entry.mode + ': ' + reason.message, { severity: reason.severity }),
+        )),
+      ]
+      const dataQuality: DataQuality = {
+        status: result.status,
+        issues,
+      }
+      return {
+        rows: all.map((entry): DataRow => ({
+          mode: entry.mode,
+          status: entry.status,
+          start_date: entry.startDate,
+          end_date: entry.endDate,
+          gross_contributions_twd: entry.grossContributionsTwd,
+          gross_withdrawals_twd: entry.grossWithdrawalsTwd,
+          terminal_value_twd: entry.terminalValueTwd,
+          estimated_gain_twd: entry.estimatedGainTwd,
+          money_multiple: entry.moneyMultiple,
+          xirr: entry.xirr,
+          cumulative_twr_proxy: entry.cumulativeTwr,
+          annualized_twr_proxy: entry.annualizedTwr,
+          maximum_drawdown: entry.maximumDrawdown,
+          recovery_date: entry.recoveryDate,
+          execution_count: entry.executionCount,
+          issue_codes: entry.issues.map((reason) => reason.code).join(','),
+        })),
+        dataQuality,
+        lineage: await lineage(context, dataQuality, {
+          asOf: result.strategies.dca.endDate,
+          resourceVersion: RESOURCE_VERSION,
+          calculationVersion: STRATEGY_COMPARISON_VERSION,
+          sourceVersion: 'YAHOO_FINANCE_CHART_ADJUSTED_CLOSE_PROXY:v0.1',
+          transactionRevision: result.transactionRevision,
+        }),
+      }
+    },
+  }))
 
   registry.register(resource({
     name: 'data_quality',

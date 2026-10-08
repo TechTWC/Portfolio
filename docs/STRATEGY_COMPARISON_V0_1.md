@@ -74,3 +74,43 @@ For DCA, Lump Sum and Transaction Replay:
 6. A 1–5 asset weighted portfolio is accepted only when weights sum to 100%.
 7. Strategy simulation is read-only and does not change ACTIVE transactions, valuations, market state or MCP write surface.
 8. Typecheck, tests, production build and dependency gates pass before any Staging acceptance.
+
+## ChatGPT / MCP read-only integration
+
+The same strategy calculation service is exposed through the **existing six
+read-only MCP tools**, with no new connection, unrestricted SQL, write tool,
+or new AI-specific finance calculation. Once the corresponding Worker version
+is deployed, ChatGPT can:
+
+1. Call \`list_data_resources\` and discover \`strategy_comparison\`.
+2. Call \`describe_resource(resource="strategy_comparison")\` for the contract.
+3. Call \`query_data(resource="strategy_comparison", filters={...})\` to receive
+   three rows: DCA, LUMP_SUM, TRANSACTION_REPLAY.
+4. Call \`get_data_lineage(target={kind:"resource",
+   name:"strategy_comparison",parameters:{...}})\` with the **same** calculation
+   filters to retrieve the transaction/calculation/source lineage.
+
+Example scalar filters (do not use nested arrays or SQL):
+
+\`\`\`json
+{
+  "start_date": "2020-01-02",
+  "end_date": "2026-10-08",
+  "dca_monthly_amount_twd": 70000,
+  "allocations": "0050.TW:50,2330.TW:50"
+}
+\`\`\`
+
+\`allocations\` is a comma-separated list of \`YAHOO_TICKER:PERCENT\` pairs;
+1–5 unique tickers, each positive, weight sum exactly 100%. Dates and
+amounts are validated before any market fetch. \`query_data\` returns
+machine-readable quality and calculation lineage with each response.
+An \`INCOMPLETE\` row or null metric must not be presented as a valid
+portfolio-performance number. XIRR in this resource is **strategy-simulated**,
+not the removed \`security_xirr\` or official account \`xirr\`.
+
+MCP resource discovery is dynamic but the deployed Staging/Production
+service must actually contain the registry entry. No UI/source-only commit
+automatically updates an already-deployed ChatGPT connector. Validate this
+resource against the **Staging MCP** after authorized Staging deployment,
+and independently check the six-tool surface remains read-only.
