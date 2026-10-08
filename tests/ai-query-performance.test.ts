@@ -326,7 +326,7 @@ describe('AI on-demand query performance', () => {
     expect(securityCashFlowSummary).not.toHaveBeenCalled()
   })
 
-  it('lists security cash flows without invoking the XIRR solver path', async () => {
+  it('lists security cash flows through the dedicated summary path', async () => {
     const session = new PortfolioReadSession(securityLineageDatabase({
       currentDatasetId: 'dataset-current',
       snapshotDatasetId: 'dataset-current',
