@@ -30,6 +30,23 @@
   font-size: clamp(2rem, 4vw, 3.4rem);
 }
 
+.performance-official-details {
+  margin-top: 18px;
+  border: 1px solid #272b33;
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.performance-official-details summary {
+  cursor: pointer;
+  color: #f2f3f5;
+  font-weight: 700;
+}
+
+.performance-official-details[open] summary {
+  margin-bottom: 16px;
+}
+
 @media (max-width: 900px) {
   .performance-fixed-link {
     position: static;

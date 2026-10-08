@@ -4,13 +4,14 @@ import type { StoredTransaction } from '../../src/lib/contracts'
 import { buildFxCostPool } from '../../src/lib/fx-cost-pool'
 import { deriveHistoricalNavDates } from '../../src/lib/historical-nav-schedule'
 import { buildCurrentPerformance } from '../../src/lib/performance'
+import { buildSecurityCashFlowSummary } from '../../src/lib/security-performance'
 import {
   buildHistoricalPerformanceSeries,
   type HistoricalPerformanceSeries,
 } from '../../src/lib/time-weighted-performance'
 import type { NormalizedValuationMark } from '../../src/lib/valuation-contracts'
 import { toValuationMark } from '../../src/lib/valuation-contracts'
-import { buildPointInTimeValuation } from '../../src/lib/valuation'
+import { buildPointInTimeValuation, isPositionValuationComplete } from '../../src/lib/valuation'
 import { reconcileValuationWithTwdCost } from '../../src/lib/valuation-cost-reconciliation'
 import { determineDateFreshness, staleMarketDataMessage } from '../../src/lib/market-data-freshness'
 import type { AiUser, DataQuality, DataQualityIssue } from './types'
@@ -187,6 +188,7 @@ export class PortfolioReadSession {
   private valuationPromise?: Promise<ValuationBundle>
   private marketMetadataPromise?: Promise<MarketMetadata>
   private marketPromise?: Promise<MarketBundle>
+  private securityCashFlowSummaryPromise?: Promise<ReturnType<typeof buildSecurityCashFlowSummary>>
 
   constructor(
     readonly db: D1Database,
@@ -233,6 +235,11 @@ export class PortfolioReadSession {
     return this.marketMetadataPromise
   }
 
+  securityCashFlowSummary(): Promise<ReturnType<typeof buildSecurityCashFlowSummary>> {
+    this.securityCashFlowSummaryPromise ??= this.loadSecurityCashFlowSummary()
+    return this.securityCashFlowSummaryPromise
+  }
+
   async currentAnalytics() {
     const [state, transactions, valuationBundle] = await Promise.all([
       this.portfolioState(),
@@ -255,7 +262,6 @@ export class PortfolioReadSession {
       valuationComplete: currentValuation?.complete ?? false,
       terminalAssetsTwd: currentValuation?.totalAssetsTwd ?? null,
     })
-
     return {
       state,
       transactions,
@@ -267,6 +273,18 @@ export class PortfolioReadSession {
       reconciliation,
       performance,
     }
+  }
+
+  private async loadSecurityCashFlowSummary(): Promise<ReturnType<typeof buildSecurityCashFlowSummary>> {
+    const valuationBundle = await this.valuationBundle()
+    return buildSecurityCashFlowSummary({
+      transactions: valuationBundle.transactions,
+      valuationDate: valuationBundle.snapshot?.valuation_date ?? null,
+      positionValuationComplete: valuationBundle.valuation
+        ? isPositionValuationComplete(valuationBundle.valuation)
+        : false,
+      terminalPositionValueTwd: valuationBundle.valuation?.knownPositionValueTwd ?? null,
+    })
   }
 
   async analytics() {

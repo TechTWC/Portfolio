@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { buildCurrentPerformance } from '../src/lib/performance'
+import { buildSecurityCashFlowSummary } from '../src/lib/security-performance'
 import type { StoredTransaction } from '../src/lib/contracts'
-import { createMetricRegistry } from '../worker/ai/platform'
+import { createDataRegistry, createMetricRegistry } from '../worker/ai/platform'
 import type { PortfolioReadSession } from '../worker/ai/read-session'
 
 const contribution: StoredTransaction = {
@@ -22,6 +23,17 @@ const contribution: StoredTransaction = {
   rowHash: 'a'.repeat(64),
 }
 
+const securityPurchase: StoredTransaction = {
+  ...contribution,
+  transactionId: 'transaction-2',
+  transactionType: 'SECURITY',
+  ticker: '2330.TW',
+  quantity: 1,
+  price: 100,
+  amountForeign: 100,
+  rowHash: 'b'.repeat(64),
+}
+
 function baseSession(overrides: Record<string, unknown> = {}) {
   const valuationBundle = {
     revision: 7,
@@ -34,7 +46,7 @@ function baseSession(overrides: Record<string, unknown> = {}) {
     valuation: {
       valuationDate: '2026-01-01', baseCurrency: 'TWD' as const, complete: true,
       positions: [], cash: [], issues: [], blockingIssueCount: 0, futureMarkCount: 0,
-      knownPositionValueTwd: 0, knownCashValueTwd: 1100,
+      knownPositionValueTwd: 110, knownCashValueTwd: 990,
       knownTotalAssetsTwd: 1100, totalAssetsTwd: 1100,
     },
   }
@@ -43,6 +55,12 @@ function baseSession(overrides: Record<string, unknown> = {}) {
     valuationDate: '2026-01-01',
     valuationComplete: true,
     terminalAssetsTwd: 1100,
+  })
+  const securityCashFlowSummary = buildSecurityCashFlowSummary({
+    transactions: [securityPurchase],
+    valuationDate: '2026-01-01',
+    positionValuationComplete: true,
+    terminalPositionValueTwd: 110,
   })
   const currentAnalytics = { performance, valuationBundle }
   return {
@@ -65,6 +83,7 @@ function baseSession(overrides: Record<string, unknown> = {}) {
       revision: 3, run: { dataVersion: 'market-data-v1.0.0', latestBarDate: '2026-01-01' },
       freshness: 'CURRENT', freshnessIssues: [],
     }),
+    securityCashFlowSummary: async () => securityCashFlowSummary,
     currentAnalytics: async () => currentAnalytics,
     analytics: async () => currentAnalytics,
     ...overrides,
@@ -115,6 +134,28 @@ describe('AI official Metric golden parity', () => {
     expect(result.status).toBe('COMPLETE')
     expect(result.value).toBe(official.xirr)
     expect(result.value).toBeCloseTo(0.1, 10)
+  })
+
+  it('exposes the exact estimated security cash-flow chain as a read-only resource', async () => {
+    const result = await createDataRegistry().query('security_cash_flows', {
+      sort: { field: 'date', direction: 'asc' },
+    }, context())
+
+    expect(result.data_quality.status).toBe('ESTIMATED')
+    expect(result.data_quality.issues).toContainEqual(expect.objectContaining({
+      type: 'UNRECORDED_DISTRIBUTIONS_AND_CORPORATE_ACTIONS', severity: 'WARNING',
+    }))
+    expect(result.lineage.calculation_version).toBe('estimated-security-cash-flow-v0.1')
+    expect(result.lineage.source_version).toBe('valuation-v0.3')
+    expect(result.rows).toEqual([
+      expect.objectContaining({
+        date: '2025-01-01', type: 'PURCHASE', signed_amount_twd: -100, source: 'TRANSACTION',
+      }),
+      expect.objectContaining({
+        date: '2026-01-01', type: 'TERMINAL_POSITION_VALUE', signed_amount_twd: 110,
+        source: 'ACTIVE_POSITION_VALUATION',
+      }),
+    ])
   })
 
   it('does not expose TWR or drawdown when total-return coverage is blocked', async () => {

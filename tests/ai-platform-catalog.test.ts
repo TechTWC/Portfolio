@@ -10,6 +10,7 @@ describe('AI semantic platform catalog', () => {
       'market_prices',
       'portfolio_snapshot',
       'positions',
+      'security_cash_flows',
       'transactions',
       'valuations',
     ])
@@ -25,6 +26,18 @@ describe('AI semantic platform catalog', () => {
       'unrealized_pl',
       'xirr',
     ])
+  })
+
+  it('does not expose the deferred Security XIRR metric', async () => {
+    const registry = createMetricRegistry()
+    expect(registry.list().map((metric) => metric.name)).not.toContain('security_xirr')
+    await expect(registry.getMetric('security_xirr', {}, {} as never)).rejects.toThrow()
+  })
+
+  it('does not advertise an unsupported central security-performance quality domain', () => {
+    const description = createDataRegistry().describe('data_quality')
+    const domain = description.fields.find((field) => field.name === 'domain')
+    expect(domain?.enum_values).not.toContain('SECURITY_PERFORMANCE')
   })
 
   it('describes percentage units as decimal values rather than ambiguous percent numbers', () => {

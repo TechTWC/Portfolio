@@ -1,6 +1,7 @@
 import { buildPortfolioAccounting } from '../../src/lib/accounting'
 import { buildCashFundingLedger } from '../../src/lib/cash-ledger'
 import { buildFxCostPool } from '../../src/lib/fx-cost-pool'
+import { SECURITY_CASH_FLOW_CALCULATION_VERSION } from '../../src/lib/security-performance'
 import {
   HISTORICAL_PERFORMANCE_CALCULATION_VERSION,
   UNSUPPORTED_TOTAL_RETURN_COVERAGE_MESSAGE,
@@ -26,6 +27,24 @@ const RESOURCE_VERSION = '1.0'
 const VALUATION_CALCULATION_VERSION = 'point-in-time-valuation-v0.3'
 const XIRR_CALCULATION_VERSION = 'money-weighted-performance-v0.5'
 const FX_COST_CALCULATION_VERSION = 'fx-cost-pool-v0.4'
+
+const SECURITY_ESTIMATE_LIMITATIONS: DataQualityIssue[] = [
+  issue(
+    'ESTIMATED_SECURITY_RETURN_SCOPE',
+    '這是證券投入效率的明示推估，不是正式帳戶總報酬；未觀察的帳戶現金不納入期末價值',
+    { severity: 'WARNING' },
+  ),
+  issue(
+    'UNRECORDED_DISTRIBUTIONS_AND_CORPORATE_ACTIONS',
+    '未記錄的股息、股票／ETF 分割及其他公司行動不會自動納入，可能使推估結果產生偏差',
+    { severity: 'WARNING' },
+  ),
+  issue(
+    'TRADE_DATE_AND_RECORDED_FX_ASSUMPTIONS',
+    '交割日先以交易日代替，外幣交易使用交易列記錄的匯率；若該匯率不是實際歷史匯率，結果仍屬推估',
+    { severity: 'WARNING' },
+  ),
+]
 
 type Context = AiRequestContext<PortfolioReadSession>
 
@@ -104,7 +123,7 @@ function resource(
     dateSemantics: input.dateSemantics ?? 'ISO 8601 calendar date (YYYY-MM-DD)',
     currencySemantics: input.currencySemantics
       ?? 'Amounts are in row.currency unless the field name or unit explicitly says TWD',
-    dataQualitySemantics: 'COMPLETE is usable, INCOMPLETE must not be treated as complete, STALE is reproducible but not current',
+    dataQualitySemantics: 'COMPLETE is fully usable, ESTIMATED is usable only within disclosed assumptions, INCOMPLETE must not be treated as complete, STALE is reproducible but not current',
     lineageAvailability: 'transaction, valuation, market-data and calculation versions are returned with every result',
     ...input,
   }
@@ -112,6 +131,19 @@ function resource(
 
 function completeOrIncomplete(issues: DataQualityIssue[]): DataQuality {
   return { status: issues.length ? 'INCOMPLETE' : 'COMPLETE', issues }
+}
+
+function estimatedSecurityQuality(
+  calculationComplete: boolean,
+  freshness: 'CURRENT' | 'STALE' | 'NO_SNAPSHOT' | 'NO_RUN',
+  blockingIssues: DataQualityIssue[],
+): DataQuality {
+  if (calculationComplete && freshness === 'CURRENT') {
+    return { status: 'ESTIMATED', issues: SECURITY_ESTIMATE_LIMITATIONS }
+  }
+  return qualityFromIssues(freshness, calculationComplete
+    ? [...blockingIssues, ...SECURITY_ESTIMATE_LIMITATIONS]
+    : blockingIssues)
 }
 
 export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
@@ -268,6 +300,52 @@ export function createDataRegistry(): ResourceRegistry<PortfolioReadSession> {
           asOf: state.latestDate,
           resourceVersion: RESOURCE_VERSION,
           calculationVersion: XIRR_CALCULATION_VERSION,
+        }),
+      }
+    },
+  }))
+
+  registry.register(resource({
+    name: 'security_cash_flows',
+    description: 'Estimated TWD security cash flows from trades and terminal open-position value; no Security XIRR is calculated or exposed',
+    fields: [
+      field('date', 'date', 'Trade date or ACTIVE valuation date', { date_semantics: 'Trade date is used as the estimated settlement date' }),
+      field('type', 'enum', 'Estimated security cash-flow type', { enum_values: ['PURCHASE', 'SALE', 'TERMINAL_POSITION_VALUE'] }),
+      field('amount_twd', 'number', 'Absolute estimated cash-flow amount in TWD', { unit: 'TWD', currency: 'TWD' }),
+      field('signed_amount_twd', 'number', 'Signed estimated security cash flow in TWD; purchases are negative and sale/terminal values are positive', { unit: 'TWD', currency: 'TWD' }),
+      field('source_row_numbers', 'string', 'Comma-separated source transaction rows; blank for terminal valuation'),
+      field('source', 'enum', 'Cash-flow source', { enum_values: ['TRANSACTION', 'ACTIVE_POSITION_VALUATION'] }),
+    ],
+    allowedFilters: ['from', 'to', 'type'],
+    allowedSort: ['date', 'type'],
+    applyFilters: (rows, filters) => filterRows(rows, filters, { type: 'type' }, 'date'),
+    readModel: async (context) => {
+      const [valuationBundle, securityCashFlowSummary] = await Promise.all([
+        context.session.valuationBundle(),
+        context.session.securityCashFlowSummary(),
+      ])
+      const issues = domainIssues(securityCashFlowSummary.issues)
+      const dataQuality = estimatedSecurityQuality(
+        securityCashFlowSummary.complete,
+        valuationBundle.freshness,
+        [...valuationBundle.freshnessIssues, ...issues],
+      )
+      return {
+        rows: securityCashFlowSummary.securityCashFlows.map((flow) => ({
+          date: flow.date,
+          type: flow.kind,
+          amount_twd: flow.amountTwd,
+          signed_amount_twd: flow.signedAmountTwd,
+          source_row_numbers: flow.sourceRowNumbers.join(','),
+          source: flow.sourceRowNumbers.length > 0 ? 'TRANSACTION' : 'ACTIVE_POSITION_VALUATION',
+        })),
+        dataQuality,
+        lineage: await lineage(context, dataQuality, {
+          asOf: securityCashFlowSummary.valuationDate,
+          resourceVersion: RESOURCE_VERSION,
+          calculationVersion: SECURITY_CASH_FLOW_CALCULATION_VERSION,
+          transactionRevision: valuationBundle.snapshot?.transaction_revision,
+          sourceVersion: valuationBundle.snapshot?.parser_version,
         }),
       }
     },
@@ -538,7 +616,7 @@ async function metricLineage(
   dataQuality: DataQuality,
   calculationVersion: string,
   asOf: string | null,
-  options: { transactionRevision?: number; valuationVersion?: number } = {},
+  options: { transactionRevision?: number; valuationVersion?: number; sourceVersion?: string } = {},
 ): Promise<DataLineage> {
   return lineage(context, dataQuality, { asOf, calculationVersion, ...options })
 }

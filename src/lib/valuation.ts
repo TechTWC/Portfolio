@@ -73,6 +73,12 @@ export type PointInTimeValuation = {
   totalAssetsTwd: number | null
 }
 
+export function isPositionValuationComplete(valuation: PointInTimeValuation): boolean {
+  return valuation.positions.every((position) =>
+    position.marketValueTwd !== null && Number.isFinite(position.marketValueTwd),
+  )
+}
+
 type SelectedMark = ValuationMark
 
 type ValuationInput = {
