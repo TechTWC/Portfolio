@@ -433,9 +433,9 @@ export default function App() {
             </article>
             <article className="focus-card compact-focus">
               <span>PERFORMANCE</span>
-              <h2>證券投入推估績效</h2>
-              <p>以買賣紀錄為主要口徑估算證券投入 XIRR；股息與公司行動未完整前，不宣稱完整總報酬、TWR 或回撤。</p>
-              <button className="secondary" type="button" onClick={() => setView('performance')}>查看推估證券 XIRR</button>
+              <h2>證券投入摘要</h2>
+              <p>以買賣紀錄與 ACTIVE 持倉市值整理證券投入、回收、推估損益與資金倍數；目前不計算 Security XIRR。</p>
+              <button className="secondary" type="button" onClick={() => setView('performance')}>查看證券投入摘要</button>
             </article>
           </section>
         </>}
