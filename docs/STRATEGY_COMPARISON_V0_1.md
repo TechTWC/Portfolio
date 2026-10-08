@@ -122,3 +122,10 @@ and independently check the six-tool surface remains read-only.
 - Snapshot transaction Dataset identity and Revision at the beginning of the simulation; verify both again before returning results. Concurrent activation is a version conflict (HTTP 409), not a valid simulation.
 - Do not silently drop a market trading date with missing adjusted close or foreign historical FX. Raise an unavailable/incomplete-data error instead of moving the DCA schedule and presenting a biased total-return estimate.
 - Results report the **actual shared market dates** used; the requested end date may fall on a holiday or beyond the latest available completed bar.
+
+## Independent Review correction: overseas quote units and bounded Yahoo history
+
+- Yahoo meta.currency is preserved as the **raw quote unit** (such as GBp or GBX). Known GBP pence units are divided by 100 before converting to TWD with historical GBP/TWD; unrecognized quote-unit conventions **fail closed**, rather than guessing.
+- Strategy and strategy-required FX Yahoo chart requests now set an **exclusive period2 on the day after requested endDate** (capped at current time). Existing official raw-close market refresh behavior with no explicit end bound remains unchanged.
+- Each selected instrument and the final shared executable market series must cover the requested start/end boundaries within a 14-calendar-day tolerance for holidays. Truncated in-window histories and missing quote/FX observations block the simulation, preventing reduced DCA principal from silently appearing comparable.
+- All related revisions are covered by synthetic golden, missing-data and calendar-boundary regressions.

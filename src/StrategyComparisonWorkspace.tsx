@@ -196,6 +196,9 @@ export default function StrategyComparisonWorkspace({ bootstrap }: { bootstrap: 
         <details className="lineage-disclosure strategy-assumptions">
           <summary>計算假設與資料來源</summary>
           <p>{result.allocations.map((item) => `${item.ticker} ${(item.weight * 100).toFixed(2)}%`).join('｜')}</p>
+          <p>行情報價單位：{result.instruments.map((item) =>
+            `${item.ticker} ${item.quoteUnit} → ${item.currency} ×${item.quoteScaleToCurrency}`,
+          ).join('｜')}</p>
           <ul>{result.assumptions.map((assumption) => <li key={assumption}>{assumption}</li>)}</ul>
         </details>
       </>}

@@ -16,6 +16,7 @@ import {
 import { getPortfolioState, getTransactionsForDataset } from './repository'
 
 const FX_LOOKBACK_DAYS = 10
+const MAX_HISTORY_BOUNDARY_GAP_DAYS = 14
 
 type User = { id: string; email: string }
 
@@ -23,6 +24,20 @@ function subtractDays(date: string, days: number): string {
   const value = new Date(`${date}T00:00:00Z`)
   value.setUTCDate(value.getUTCDate() - days)
   return value.toISOString().slice(0, 10)
+}
+
+export function adjustedStrategyPriceTwd(
+  adjustedClose: number,
+  quoteScaleToCurrency: number,
+  fxRate: number,
+): number {
+  const value = adjustedClose * quoteScaleToCurrency * fxRate
+  if (!Number.isFinite(value) || value <= 0) throw new Error('INVALID_STRATEGY_TWD_PRICE')
+  return value
+}
+
+function daysBetween(left: string, right: string): number {
+  return Math.round((Date.parse(right + 'T00:00:00Z') - Date.parse(left + 'T00:00:00Z')) / 86400000)
 }
 
 function latestFxOnOrBefore(
@@ -63,7 +78,7 @@ export async function runStrategyComparison(
   }))
 
   const histories = await Promise.all(allocations.map((allocation) =>
-    fetchYahooStrategyHistory(allocation.ticker, request.startDate, fetcher, now),
+    fetchYahooStrategyHistory(allocation.ticker, request.startDate, fetcher, now, request.endDate),
   ))
   const foreignCurrencies = [...new Set(histories
     .map((history) => history.currency)
@@ -76,10 +91,12 @@ export async function runStrategyComparison(
       providerSymbol: yahooSymbolForFx(currency),
       startDate: subtractDays(request.startDate, FX_LOOKBACK_DAYS),
     }
-    return [currency, await fetchYahooDailyHistory(instrument, fetcher, now)] as const
+    return [currency, await fetchYahooDailyHistory(instrument, fetcher, now, request.endDate)] as const
   }))
   const fxByCurrency = new Map(fxEntries)
 
+  const coverageEnd = request.endDate < now.toISOString().slice(0, 10)
+    ? request.endDate : now.toISOString().slice(0, 10)
   const priceSeries: StrategyPriceSeries[] = histories.map((history) => {
     const fxBars = history.currency === 'TWD' ? null : fxByCurrency.get(history.currency)?.bars ?? null
     // A missing price or historical FX is incomplete data, not a non-trading day.
@@ -96,11 +113,17 @@ export async function runStrategyComparison(
         }
         return {
           date: bar.date,
-          totalReturnPriceTwd: bar.adjustedClose * fxRate,
+          totalReturnPriceTwd: adjustedStrategyPriceTwd(
+            bar.adjustedClose, history.quoteScaleToCurrency, fxRate,
+          ),
         }
       })
     if (points.length === 0) {
       throw new Error(`${history.ticker} 在比較期間沒有可用的 adjusted-close TWD proxy`)
+    }
+    if (daysBetween(request.startDate, points[0].date) > MAX_HISTORY_BOUNDARY_GAP_DAYS
+        || daysBetween(points.at(-1)!.date, coverageEnd) > MAX_HISTORY_BOUNDARY_GAP_DAYS) {
+      throw new Error(`TRUNCATED_STRATEGY_HISTORY: ${history.ticker}`)
     }
     return { ticker: history.ticker, points }
   })
@@ -110,6 +133,11 @@ export async function runStrategyComparison(
     priceSeries,
     transactions,
   })
+  if (!core.dca.startDate || !core.dca.endDate
+      || daysBetween(request.startDate, core.dca.startDate) > MAX_HISTORY_BOUNDARY_GAP_DAYS
+      || daysBetween(core.dca.endDate, coverageEnd) > MAX_HISTORY_BOUNDARY_GAP_DAYS) {
+    throw new Error('TRUNCATED_COMMON_STRATEGY_HISTORY')
+  }
   const strategies = {
     dca: core.dca,
     lumpSum: core.lumpSum,
@@ -130,6 +158,7 @@ export async function runStrategyComparison(
     priceBasis: 'YAHOO_ADJUSTED_CLOSE_TWD_PROXY',
     assumptions: [
       '策略績效使用 Yahoo adjusted close 作為股息與公司行動的總報酬代理；不等同正式 Corporate Action Ledger。',
+      '海外報價若使用可辨識的子單位（例如 GBp）先正規化為整幣，才與歷史外匯匯率換算。',
       '模擬允許小數單位，且 v0.1 不計手續費、交易稅、滑價與融資成本。',
       'DCA 每月以開始日的日號排程，遇非共同交易日順延至下一個所有標的皆有價格的交易日。',
       'Lump Sum 使用與本次 DCA 實際執行次數相同的總投入本金，於第一個共同交易日一次投入。',
@@ -141,6 +170,8 @@ export async function runStrategyComparison(
     instruments: histories.map((history) => ({
       ticker: history.ticker,
       currency: history.currency,
+      quoteUnit: history.quoteUnit,
+      quoteScaleToCurrency: history.quoteScaleToCurrency,
       exchangeTimezone: history.exchangeTimezone,
       firstDate: history.bars[0]?.date ?? request.startDate,
       lastDate: history.bars.at(-1)?.date ?? request.endDate,

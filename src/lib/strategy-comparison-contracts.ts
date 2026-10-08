@@ -91,6 +91,8 @@ export type StrategySimulationResult = {
 export type StrategyMarketInstrument = {
   ticker: string
   currency: string
+  quoteUnit: string
+  quoteScaleToCurrency: number
   exchangeTimezone: string
   firstDate: string
   lastDate: string
