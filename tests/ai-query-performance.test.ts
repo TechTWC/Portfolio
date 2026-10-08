@@ -326,6 +326,23 @@ describe('AI on-demand query performance', () => {
     expect(securityPerformance).not.toHaveBeenCalled()
   })
 
+  it('lists security cash flows without invoking the XIRR solver path', async () => {
+    const session = new PortfolioReadSession(securityLineageDatabase({
+      currentDatasetId: 'dataset-current',
+      snapshotDatasetId: 'dataset-current',
+    }), { id: 'cash-flow-only-user', email: 'owner@example.test' }, new Date('2026-01-02T00:00:00Z'))
+    const securityCashFlowSummary = vi.spyOn(session, 'securityCashFlowSummary')
+    const securityPerformance = vi.spyOn(session, 'securityPerformance')
+
+    const result = await withinTimeout(createDataRegistry().query('security_cash_flows', {
+      sort: { field: 'date', direction: 'asc' },
+    }, context(session)))
+
+    expect(result.rows).toHaveLength(2)
+    expect(securityCashFlowSummary).toHaveBeenCalledTimes(1)
+    expect(securityPerformance).not.toHaveBeenCalled()
+  })
+
   it('keeps stale security cash flows bound to the valuation snapshot dataset and lineage', async () => {
     const session = new PortfolioReadSession(securityLineageDatabase({
       currentDatasetId: 'dataset-current',
