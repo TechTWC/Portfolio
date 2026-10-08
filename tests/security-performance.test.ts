@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { NormalizedTransaction } from '../src/lib/contracts'
-import { buildSecurityInvestmentPerformance } from '../src/lib/security-performance'
+import { buildSecurityCashFlowSummary } from '../src/lib/security-performance'
 
 function row(overrides: Partial<NormalizedTransaction> = {}): NormalizedTransaction {
   return {
@@ -24,9 +24,9 @@ function row(overrides: Partial<NormalizedTransaction> = {}): NormalizedTransact
 
 function calculate(
   transactions: NormalizedTransaction[],
-  overrides: Partial<Parameters<typeof buildSecurityInvestmentPerformance>[0]> = {},
+  overrides: Partial<Parameters<typeof buildSecurityCashFlowSummary>[0]> = {},
 ) {
-  return buildSecurityInvestmentPerformance({
+  return buildSecurityCashFlowSummary({
     transactions,
     valuationDate: '2027-01-01',
     positionValuationComplete: true,
@@ -35,16 +35,17 @@ function calculate(
   })
 }
 
-describe('estimated security investment XIRR', () => {
-  it('calculates a 10 percent one-year return from a purchase and terminal position value', () => {
+describe('estimated security investment cash-flow summary', () => {
+  it('summarizes purchase, terminal value, gain and money multiple without XIRR', () => {
     const result = calculate([row()])
 
     expect(result.complete).toBe(true)
     expect(result.estimated).toBe(true)
-    expect(result.xirr).toBeCloseTo(0.1, 9)
+    expect(result.calculationVersion).toBe('estimated-security-cash-flow-v0.1')
     expect(result.grossPurchasesTwd).toBe(100)
     expect(result.grossSaleProceedsTwd).toBe(0)
     expect(result.netSecurityCapitalDeployedTwd).toBe(100)
+    expect(result.terminalPositionValueTwd).toBe(110)
     expect(result.estimatedGainTwd).toBe(10)
     expect(result.securityMultiple).toBeCloseTo(1.1, 12)
   })
@@ -86,7 +87,6 @@ describe('estimated security investment XIRR', () => {
     expect(3 * 0.1 - 0.3).toBeGreaterThan(0)
     expect(3 * 0.1 - 0.3).toBeLessThan(1e-9)
     expect(result.complete).toBe(true)
-    expect(result.xirr).toBeCloseTo(0.1, 9)
     expect(result.grossSaleProceedsTwd).toBe(0)
     expect(result.issues).toEqual([])
     expect(result.securityCashFlows).toEqual([
@@ -130,35 +130,25 @@ describe('estimated security investment XIRR', () => {
 
     expect(result.terminalPositionValueTwd).toBe(125)
     expect(result.estimatedGainTwd).toBe(25)
-    expect(result.xirr).toBeCloseTo(0.25, 9)
+    expect(result.securityMultiple).toBeCloseTo(1.25, 12)
   })
 
-  it('locks the anonymized synthetic golden rate verified against the supplied workbook', () => {
-    const result = calculate([
-      row({ tradeDate: '2025-09-01', amountForeign: 1_000, price: 1_000 }),
-      row({ sourceRowNumber: 3, tradeDate: '2026-01-15', amountForeign: 600, price: 600 }),
-      row({
-        sourceRowNumber: 4,
-        tradeDate: '2026-05-20',
-        quantity: -1,
-        amountForeign: 250,
-        price: 250,
-      }),
-    ], {
-      valuationDate: '2026-09-01',
-      terminalPositionValueTwd: 1_787.1596659049292,
+  it('allows same-day purchase and terminal valuation because no annualized XIRR is calculated', () => {
+    const result = calculate([row({ tradeDate: '2026-01-01' })], {
+      valuationDate: '2026-01-01',
+      terminalPositionValueTwd: 110,
     })
 
     expect(result.complete).toBe(true)
-    expect(result.securityCashFlows).toHaveLength(4)
-    expect(result.xirr).toBeCloseTo(0.3384104923, 9)
+    expect(result.estimatedGainTwd).toBe(10)
+    expect(result.securityMultiple).toBeCloseTo(1.1, 12)
+    expect(result.issues).toEqual([])
   })
 
-  it('fails gain, multiple and XIRR closed when a foreign security flow has no usable FX rate', () => {
+  it('fails gain and multiple closed when a foreign security flow has no usable FX rate', () => {
     const result = calculate([row({ ticker: 'VOO', currency: 'USD', fxRate: null })])
 
     expect(result.complete).toBe(false)
-    expect(result.xirr).toBeNull()
     expect(result.estimatedGainTwd).toBeNull()
     expect(result.securityMultiple).toBeNull()
     expect(result.terminalPositionValueTwd).toBe(110)
@@ -193,7 +183,7 @@ describe('estimated security investment XIRR', () => {
     ])
 
     expect(result.complete).toBe(true)
-    expect(result.xirr).toBeCloseTo(0.1, 9)
+    expect(result.estimatedGainTwd).toBe(10)
     expect(result.issues).toEqual([])
   })
 
@@ -204,40 +194,10 @@ describe('estimated security investment XIRR', () => {
     ])
 
     expect(result.complete).toBe(false)
-    expect(result.xirr).toBeNull()
     expect(result.estimatedGainTwd).toBeNull()
     expect(result.securityMultiple).toBeNull()
     expect(result.issues).toContainEqual(expect.objectContaining({
       code: 'TRANSACTION_AFTER_VALUATION_DATE', sourceRowNumbers: [3],
     }))
-  })
-
-  it('reports ZERO_TIME_SPAN when purchase and terminal valuation share the same date', () => {
-    const result = calculate([
-      row({ tradeDate: '2026-01-01', amountForeign: 100, price: 100 }),
-    ], {
-      valuationDate: '2026-01-01',
-      terminalPositionValueTwd: 110,
-    })
-
-    expect(result.complete).toBe(false)
-    expect(result.xirr).toBeNull()
-    expect(result.issues).toContainEqual(expect.objectContaining({ code: 'ZERO_TIME_SPAN' }))
-    expect(result.issues).not.toContainEqual(expect.objectContaining({ code: 'XIRR_NOT_FOUND' }))
-  })
-
-  it('blocks multiple mathematical roots instead of selecting one silently', () => {
-    const result = calculate([
-      row({ tradeDate: '2026-01-01', amountForeign: 100 }),
-      row({ sourceRowNumber: 3, tradeDate: '2027-01-01', quantity: -1, amountForeign: 230 }),
-      row({ sourceRowNumber: 4, tradeDate: '2028-01-01', quantity: 1, amountForeign: 132 }),
-    ], {
-      valuationDate: '2028-01-01',
-      terminalPositionValueTwd: 0,
-    })
-
-    expect(result.complete).toBe(false)
-    expect(result.xirr).toBeNull()
-    expect(result.issues).toContainEqual(expect.objectContaining({ code: 'MULTIPLE_XIRR_ROOTS' }))
   })
 })
