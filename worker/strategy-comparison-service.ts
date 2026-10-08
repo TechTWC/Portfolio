@@ -82,16 +82,22 @@ export async function runStrategyComparison(
 
   const priceSeries: StrategyPriceSeries[] = histories.map((history) => {
     const fxBars = history.currency === 'TWD' ? null : fxByCurrency.get(history.currency)?.bars ?? null
+    // A missing price or historical FX is incomplete data, not a non-trading day.
+    // Silently dropping it would move scheduled investments and bias returns.
     const points = history.bars
       .filter((bar) => bar.date >= request.startDate && bar.date <= request.endDate)
-      .flatMap((bar) => {
-        if (bar.adjustedClose === null || !Number.isFinite(bar.adjustedClose) || bar.adjustedClose <= 0) return []
+      .map((bar) => {
+        if (bar.adjustedClose === null || !Number.isFinite(bar.adjustedClose) || bar.adjustedClose <= 0) {
+          throw new Error(`MISSING_STRATEGY_ADJUSTED_CLOSE: ${history.ticker} ${bar.date}`)
+        }
         const fxRate = history.currency === 'TWD' ? 1 : latestFxOnOrBefore(fxBars ?? [], bar.date)
-        if (fxRate === null) return []
-        return [{
+        if (fxRate === null) {
+          throw new Error(`MISSING_STRATEGY_HISTORICAL_FX: ${history.ticker} ${bar.date}`)
+        }
+        return {
           date: bar.date,
           totalReturnPriceTwd: bar.adjustedClose * fxRate,
-        }]
+        }
       })
     if (points.length === 0) {
       throw new Error(`${history.ticker} 在比較期間沒有可用的 adjusted-close TWD proxy`)

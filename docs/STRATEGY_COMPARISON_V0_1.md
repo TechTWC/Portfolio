@@ -114,3 +114,11 @@ service must actually contain the registry entry. No UI/source-only commit
 automatically updates an already-deployed ChatGPT connector. Validate this
 resource against the **Staging MCP** after authorized Staging deployment,
 and independently check the six-tool surface remains read-only.
+
+## Data-quality fail-closed refinements
+
+- Reject nonexistent calendar dates and non-Yahoo ticker syntax before fetching.
+- Limit the comparison window to at most 30 years.
+- Snapshot transaction Dataset identity and Revision at the beginning of the simulation; verify both again before returning results. Concurrent activation is a version conflict (HTTP 409), not a valid simulation.
+- Do not silently drop a market trading date with missing adjusted close or foreign historical FX. Raise an unavailable/incomplete-data error instead of moving the DCA schedule and presenting a biased total-return estimate.
+- Results report the **actual shared market dates** used; the requested end date may fall on a holiday or beyond the latest available completed bar.

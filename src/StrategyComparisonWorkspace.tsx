@@ -174,10 +174,12 @@ export default function StrategyComparisonWorkspace({ bootstrap }: { bootstrap: 
             <tr><td>期末價值</td>{strategyEntries.map(([key, value]) => <td className="numeric" key={key}>{formatAmount(value.terminalValueTwd)}</td>)}</tr>
             <tr><td>推估損益</td>{strategyEntries.map(([key, value]) => <td className="numeric" key={key}>{formatAmount(value.estimatedGainTwd)}</td>)}</tr>
             <tr><td>Money Multiple</td>{strategyEntries.map(([key, value]) => <td className="numeric" key={key}>{formatMultiple(value.moneyMultiple)}</td>)}</tr>
-            <tr><td>XIRR</td>{strategyEntries.map(([key, value]) => <td className="numeric" key={key}>{formatPercent(value.xirr)}</td>)}</tr>
-            <tr><td>累積 TWR</td>{strategyEntries.map(([key, value]) => <td className="numeric" key={key}>{formatPercent(value.cumulativeTwr)}</td>)}</tr>
-            <tr><td>年化 TWR</td>{strategyEntries.map(([key, value]) => <td className="numeric" key={key}>{formatPercent(value.annualizedTwr)}</td>)}</tr>
+            <tr><td>策略模擬 XIRR</td>{strategyEntries.map(([key, value]) => <td className="numeric" key={key}>{formatPercent(value.xirr)}</td>)}</tr>
+            <tr><td>模擬累積 TWR 代理</td>{strategyEntries.map(([key, value]) => <td className="numeric" key={key}>{formatPercent(value.cumulativeTwr)}</td>)}</tr>
+            <tr><td>模擬年化 TWR 代理</td>{strategyEntries.map(([key, value]) => <td className="numeric" key={key}>{formatPercent(value.annualizedTwr)}</td>)}</tr>
             <tr><td>最大回撤</td>{strategyEntries.map(([key, value]) => <td className="numeric" key={key}>{formatPercent(value.maximumDrawdown)}</td>)}</tr>
+            <tr><td>實際採用日期</td>{strategyEntries.map(([key, value]) => <td className="numeric" key={key}>{value.startDate ?? '—'} → {value.endDate ?? '—'}</td>)}</tr>
+            <tr><td>最大回撤後復原日</td>{strategyEntries.map(([key, value]) => <td className="numeric" key={key}>{value.recoveryDate ?? '—'}</td>)}</tr>
             <tr><td>執行次數</td>{strategyEntries.map(([key, value]) => <td className="numeric" key={key}>{value.executionCount.toLocaleString()}</td>)}</tr>
           </tbody>
         </table></div>

@@ -41,7 +41,7 @@ function fixtureDatabase(conflict = false) {
   return { db: db as unknown as D1Database, calls }
 }
 
-function fixtureFetcher() {
+function fixtureFetcher(adjustedClose: Array<number | null> = [100, 110, 121, 133.1]) {
   const dates = ['2026-01-02', '2026-02-02', '2026-03-02', '2026-04-01']
   return vi.fn(async () => new Response(JSON.stringify({
     chart: {
@@ -50,7 +50,7 @@ function fixtureFetcher() {
         timestamp: dates.map((date) => Math.floor(Date.parse(date + 'T05:30:00Z') / 1000)),
         indicators: {
           quote: [{ close: [100, 110, 121, 133.1] }],
-          adjclose: [{ adjclose: [100, 110, 121, 133.1] }],
+          adjclose: [{ adjclose: adjustedClose }],
         },
       }],
     },
@@ -83,6 +83,17 @@ describe('Strategy Comparison input integrity / read-only service', () => {
     const transactionsQuery = calls.filter((c) => c.sql.includes('FROM transactions'))
     expect(transactionsQuery).toHaveLength(1)
     expect(transactionsQuery[0].bind).toEqual(['ds1', 'synthetic-user'])
+  })
+
+  it('rejects incomplete adjusted-close history instead of shifting DCA dates unnoticed', async () => {
+    const { db } = fixtureDatabase()
+    await expect(runStrategyComparison(
+      db, { id: 'synthetic-user', email: 'not-real@example.test' },
+      request, {
+        now: new Date('2026-04-02T00:00:00Z'),
+        fetcher: fixtureFetcher([100, null, 121, 133.1]) as typeof fetch,
+      },
+    )).rejects.toThrow('MISSING_STRATEGY_ADJUSTED_CLOSE')
   })
 
   it('fails closed if the ACTIVE transaction version changes while Yahoo data is fetched', async () => {
