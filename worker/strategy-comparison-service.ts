@@ -190,6 +190,12 @@ export async function runStrategyComparison(
       || daysBetween(core.dca.endDate, coverageEnd) > MAX_HISTORY_BOUNDARY_GAP_DAYS) {
     throw new Error('TRUNCATED_COMMON_STRATEGY_HISTORY')
   }
+  for (let index = 1; index < core.dca.curve.length; index += 1) {
+    if (daysBetween(core.dca.curve[index - 1].date, core.dca.curve[index].date)
+        > MAX_HISTORY_BOUNDARY_GAP_DAYS) {
+      throw new Error('GAPPED_COMMON_STRATEGY_HISTORY')
+    }
+  }
   const strategies = {
     dca: core.dca,
     lumpSum: core.lumpSum,

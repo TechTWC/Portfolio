@@ -158,15 +158,18 @@ describe('Strategy Comparison input integrity / read-only service', () => {
     )).rejects.toThrow('GAPPED_STRATEGY_HISTORY')
   })
 
-  it('rejects insufficient shared-market coverage across individually valid series', async () => {
+  it('rejects an interior gap in shared dates across individually continuous series', async () => {
     const { db } = fixtureDatabase()
     const fetcher = vi.fn(async (url: string) => {
-      const start = new Date(url.includes('/BBB?') ? '2026-01-03T00:00:00Z' : '2026-01-02T00:00:00Z')
-      const end = new Date(url.includes('/BBB?') ? '2026-04-01T00:00:00Z' : '2026-03-31T00:00:00Z')
+      const isB = url.includes('/BBB?')
+      const start = new Date(isB ? '2026-01-03T00:00:00Z' : '2026-01-02T00:00:00Z')
+      const end = new Date(isB ? '2026-04-01T00:00:00Z' : '2026-03-31T00:00:00Z')
       const dates: string[] = []
       for (const date = new Date(start); date <= end; date.setUTCDate(date.getUTCDate() + 2)) {
         dates.push(date.toISOString().slice(0, 10))
       }
+      if (isB) dates.unshift('2026-01-02')
+      else dates.push('2026-04-01')
       const prices = dates.map((_, index) => 100 + index)
       return new Response(JSON.stringify({
         chart: { result: [{
@@ -183,7 +186,7 @@ describe('Strategy Comparison input integrity / read-only service', () => {
       db, { id: 'synthetic-user', email: 'not-real@example.test' },
       { ...request, allocations: [{ ticker: 'AAA', weight: 0.5 }, { ticker: 'BBB', weight: 0.5 }] },
       { now: new Date('2026-10-08T00:00:00Z'), fetcher: fetcher as typeof fetch },
-    )).rejects.toThrow('TRUNCATED_COMMON_STRATEGY_HISTORY')
+    )).rejects.toThrow('GAPPED_COMMON_STRATEGY_HISTORY')
   })
 
   it('fails closed if the ACTIVE transaction version changes while Yahoo data is fetched', async () => {
