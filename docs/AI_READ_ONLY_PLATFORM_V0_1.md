@@ -61,18 +61,17 @@ Verified metrics in v0.1:
 
 - `nav`
 - `twr`
-- `security_xirr`
 - `xirr`
 - `max_drawdown`
 - `realized_pl`
 - `unrealized_pl`
 - `cash_ratio`
 
-Metric calculators call the existing Portfolio Analyzer domain services. The MCP layer does not reimplement NAV, TWR, XIRR, drawdown, cost basis, FX conventions, or valuation.
+Metric calculators call the existing Portfolio Analyzer domain services. The MCP layer does not reimplement NAV, TWR, the official account XIRR, drawdown, cost basis, FX conventions, or valuation.
 
-`security_xirr` is explicitly estimated: security purchases are negative cash flows, net sale proceeds are positive cash flows, and the terminal open-position market value is the final positive flow. It uses trade dates as cash-flow dates and excludes unrecorded dividends and corporate actions. The separate `xirr` metric remains the official account-level XIRR based only on dated external contributions, withdrawals, and terminal total assets.
+Security XIRR is intentionally not exposed in v0.1. The `security_cash_flows` resource retains the observable security investment chain: purchases are negative cash flows, net sale proceeds are positive cash flows, and terminal open-position market value is the final positive flow. It uses trade dates as cash-flow dates and excludes unrecorded dividends and corporate actions. The separate `xirr` metric remains the official account-level XIRR based only on dated external contributions, withdrawals, and terminal total assets.
 
-When the required transactions, FX inputs and terminal position valuation are available and current, `security_xirr` and `security_cash_flows` return `ESTIMATED`, not `COMPLETE`. The value remains available, accompanied by machine-readable warnings for its security-only scope, unrecorded distributions and corporate actions, trade-date settlement assumption, and recorded-FX assumption. `ESTIMATED` means usable only within those disclosed assumptions; it never means complete total return.
+When the required transactions, FX inputs and terminal position valuation are available and current, `security_cash_flows` returns `ESTIMATED`, not `COMPLETE`. The resource includes machine-readable warnings for its security-only scope, unrecorded distributions and corporate actions, trade-date settlement assumption, and recorded-FX assumption. `ESTIMATED` means usable only within those disclosed assumptions; it never means complete total return.
 
 Because corporate actions and total-return coverage are not complete, `twr` and `max_drawdown` return `INCOMPLETE` with a null value. The server does not present price-only history as official total return.
 
