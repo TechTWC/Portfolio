@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { buildCurrentPerformance } from '../src/lib/performance'
-import { buildSecurityInvestmentPerformance } from '../src/lib/security-performance'
+import {
+  buildSecurityCashFlowSummary,
+  buildSecurityInvestmentPerformance,
+} from '../src/lib/security-performance'
 import type { StoredTransaction } from '../src/lib/contracts'
 import { createDataRegistry, createMetricRegistry } from '../worker/ai/platform'
 import type { PortfolioReadSession } from '../worker/ai/read-session'
@@ -56,6 +59,12 @@ function baseSession(overrides: Record<string, unknown> = {}) {
     valuationComplete: true,
     terminalAssetsTwd: 1100,
   })
+  const securityCashFlowSummary = buildSecurityCashFlowSummary({
+    transactions: [securityPurchase],
+    valuationDate: '2026-01-01',
+    positionValuationComplete: true,
+    terminalPositionValueTwd: 110,
+  })
   const securityPerformance = buildSecurityInvestmentPerformance({
     transactions: [securityPurchase],
     valuationDate: '2026-01-01',
@@ -83,6 +92,7 @@ function baseSession(overrides: Record<string, unknown> = {}) {
       revision: 3, run: { dataVersion: 'market-data-v1.0.0', latestBarDate: '2026-01-01' },
       freshness: 'CURRENT', freshnessIssues: [],
     }),
+    securityCashFlowSummary: async () => securityCashFlowSummary,
     securityPerformance: async () => securityPerformance,
     currentAnalytics: async () => currentAnalytics,
     analytics: async () => currentAnalytics,
