@@ -5,7 +5,10 @@ import { buildFxCostPool } from '../../src/lib/fx-cost-pool'
 import { deriveHistoricalNavDates } from '../../src/lib/historical-nav-schedule'
 import { buildCurrentPerformance } from '../../src/lib/performance'
 import { buildSecurityCashFlowSummary } from '../../src/lib/security-performance'
-import type { StrategyComparisonRequest } from '../../src/lib/strategy-comparison-contracts'
+import type {
+  StrategyComparisonRequest,
+  StrategyComparisonResponse,
+} from '../../src/lib/strategy-comparison-contracts'
 import { runStrategyComparison } from '../strategy-comparison-service'
 import {
   buildHistoricalPerformanceSeries,
@@ -146,6 +149,62 @@ export type MarketBundle = {
 
 export type MarketMetadata = Pick<MarketBundle, 'revision' | 'run' | 'freshness' | 'freshnessIssues'>
 
+const STRATEGY_RESULT_CACHE_TTL_MS = 2 * 60 * 1000
+const STRATEGY_RESULT_CACHE_MAX_ENTRIES = 20
+
+type StrategyResultCacheEntry = {
+  expiresAt: number
+  result: Promise<StrategyComparisonResponse>
+}
+
+// MCP query_data and get_data_lineage are separate read-only tool calls. Keep a
+// small, short-lived, user/version-scoped single-flight cache so both calls bind
+// to the same completed Yahoo snapshot instead of launching a second simulation.
+const strategyResultCache = new Map<string, StrategyResultCacheEntry>()
+
+function strategyCacheKey(
+  userId: string,
+  state: PortfolioState,
+  request: StrategyComparisonRequest,
+): string {
+  return JSON.stringify([
+    userId,
+    state.activeDatasetId,
+    state.cloudRevision,
+    request.startDate,
+    request.endDate,
+    request.dcaMonthlyAmountTwd,
+    request.allocations.map((item) => [item.ticker.trim().toUpperCase(), item.weight]),
+  ])
+}
+
+function freshStrategyCacheEntry(key: string): StrategyResultCacheEntry | null {
+  const entry = strategyResultCache.get(key)
+  if (!entry) return null
+  if (entry.expiresAt <= Date.now()) {
+    strategyResultCache.delete(key)
+    return null
+  }
+  strategyResultCache.delete(key)
+  strategyResultCache.set(key, entry)
+  return entry
+}
+
+function reserveStrategyCacheEntry(key: string, result: Promise<StrategyComparisonResponse>) {
+  for (const [candidate, entry] of strategyResultCache) {
+    if (entry.expiresAt <= Date.now()) strategyResultCache.delete(candidate)
+  }
+  while (strategyResultCache.size >= STRATEGY_RESULT_CACHE_MAX_ENTRIES) {
+    const oldest = strategyResultCache.keys().next().value as string | undefined
+    if (!oldest) break
+    strategyResultCache.delete(oldest)
+  }
+  strategyResultCache.set(key, {
+    expiresAt: Date.now() + STRATEGY_RESULT_CACHE_TTL_MS,
+    result,
+  })
+}
+
 function transactionFromRow(row: TransactionRow): StoredTransaction {
   return {
     transactionId: row.transaction_id,
@@ -198,8 +257,28 @@ export class PortfolioReadSession {
     readonly now = new Date(),
   ) {}
 
-  strategyComparison(request: StrategyComparisonRequest) {
-    return runStrategyComparison(this.db, this.user, request, { now: this.now })
+  async strategyComparison(request: StrategyComparisonRequest): Promise<StrategyComparisonResponse> {
+    const state = await this.portfolioState()
+    const key = strategyCacheKey(this.user.id, state, request)
+    const cached = freshStrategyCacheEntry(key)
+    if (cached) return cached.result
+
+    const result = runStrategyComparison(this.db, this.user, request, { now: this.now })
+    reserveStrategyCacheEntry(key, result)
+    try {
+      return await result
+    } catch (error) {
+      if (strategyResultCache.get(key)?.result === result) strategyResultCache.delete(key)
+      throw error
+    }
+  }
+
+  async cachedStrategyComparison(request: StrategyComparisonRequest): Promise<StrategyComparisonResponse> {
+    const state = await this.portfolioState()
+    const key = strategyCacheKey(this.user.id, state, request)
+    const cached = freshStrategyCacheEntry(key)
+    if (!cached) throw new Error('STRATEGY_RESULT_NOT_CACHED')
+    return cached.result
   }
 
   portfolioState(): Promise<PortfolioState> {

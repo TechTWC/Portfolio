@@ -104,6 +104,7 @@ export type StrategyComparisonResponse = {
   priceBasis: 'YAHOO_ADJUSTED_CLOSE_TWD_PROXY'
   assumptions: string[]
   marketSource: string
+  marketDataVersion: string
   transactionRevision: number
   allocations: StrategyAllocation[]
   instruments: StrategyMarketInstrument[]

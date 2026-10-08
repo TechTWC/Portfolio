@@ -170,7 +170,7 @@ describe('Yahoo Finance daily raw-close adapter', () => {
   })
 
   it('limits past strategy/FX Yahoo history to the requested end rather than today', async () => {
-    const fetcher = vi.fn().mockResolvedValue(response({
+    const payload = {
       chart: { result: [{
         meta: { currency: 'USD', exchangeTimezoneName: 'America/New_York' },
         timestamp: [Math.floor(Date.parse('2026-03-31T20:00:00Z') / 1000)],
@@ -179,7 +179,11 @@ describe('Yahoo Finance daily raw-close adapter', () => {
           adjclose: [{ adjclose: [119] }],
         },
       }] },
-    }))
+    }
+    // A Fetch response body is a one-shot stream. Return a fresh response for
+    // each independent security/FX request instead of reusing an already-read
+    // synthetic body.
+    const fetcher = vi.fn().mockImplementation(async () => response(payload))
     const now = new Date('2026-10-08T00:00:00Z')
     const historical = await fetchYahooStrategyHistory('AAPL', '2026-01-01',
       fetcher, now, '2026-04-01')

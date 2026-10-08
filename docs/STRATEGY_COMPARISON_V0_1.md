@@ -88,7 +88,10 @@ is deployed, ChatGPT can:
    three rows: DCA, LUMP_SUM, TRANSACTION_REPLAY.
 4. Call \`get_data_lineage(target={kind:"resource",
    name:"strategy_comparison",parameters:{...}})\` with the **same** calculation
-   filters to retrieve the transaction/calculation/source lineage.
+   filters to retrieve the transaction/calculation/source lineage from the
+   short-lived completed-result cache. If that cache is unavailable, use the
+   exact lineage already embedded in the \`query_data\` response; lineage never
+   launches a second Yahoo simulation.
 
 Example scalar filters (do not use nested arrays or SQL):
 
@@ -108,6 +111,14 @@ machine-readable quality and calculation lineage with each response.
 An \`INCOMPLETE\` row or null metric must not be presented as a valid
 portfolio-performance number. XIRR in this resource is **strategy-simulated**,
 not the removed \`security_xirr\` or official account \`xirr\`.
+
+The resource always returns its fixed three rows as one snapshot and therefore
+does not accept cursor pagination. A bounded, two-minute, user + ACTIVE Dataset
+Revision + request-scoped in-memory cache lets an immediate lineage lookup reuse
+the exact completed result. Every completed Yahoo/FX input set also receives a
+SHA-256 \`source_version\`; different snapshots cannot silently share lineage.
+The cache is ephemeral and never writes strategy results into portfolio,
+transaction, valuation or other persistent product data.
 
 MCP resource discovery is dynamic but the deployed Staging/Production
 service must actually contain the registry entry. No UI/source-only commit

@@ -38,6 +38,7 @@ function mockService(replayStatus: StrategySimulationResult['status'] = 'ESTIMAT
     status: replayStatus,
     priceBasis: 'YAHOO_ADJUSTED_CLOSE_TWD_PROXY',
     marketSource: 'YAHOO_FINANCE_CHART',
+    marketDataVersion: 'YAHOO_FINANCE_CHART_ADJUSTED_CLOSE_PROXY:v0.1:fixture',
     transactionRevision: 9,
     allocations: [{ ticker: '0050.TW', weight: 0.5 }, { ticker: '2330.TW', weight: 0.5 }],
     instruments: [], assumptions: [],
@@ -48,8 +49,10 @@ function mockService(replayStatus: StrategySimulationResult['status'] = 'ESTIMAT
       transactionReplay: simulation('TRANSACTION_REPLAY', replayStatus),
     },
   }
+  const strategyComparison = vi.fn(async () => response)
   const mock = {
-    strategyComparison: vi.fn(async () => response),
+    strategyComparison,
+    cachedStrategyComparison: vi.fn(async () => response),
     portfolioState: vi.fn(async () => ({ cloudRevision: 9, parserVersion: 'parser-v0.8' })),
     valuationMetadata: vi.fn(async () => ({ revision: 5, snapshot: null })),
     marketMetadata: vi.fn(async () => ({ run: null })),
@@ -90,7 +93,7 @@ describe('MCP strategy comparison through existing read-only query_data', () => 
     expect(result.lineage).toMatchObject({
       transaction_revision: 9, valuation_version: 5,
       calculation_version: 'strategy-comparison-v0.1',
-      source_version: 'YAHOO_FINANCE_CHART_ADJUSTED_CLOSE_PROXY:v0.1',
+      source_version: 'YAHOO_FINANCE_CHART_ADJUSTED_CLOSE_PROXY:v0.1:fixture',
       as_of: '2026-04-01',
     })
     expect(mock.currentAnalytics).not.toHaveBeenCalled()
@@ -113,10 +116,30 @@ describe('MCP strategy comparison through existing read-only query_data', () => 
 
   it('get_data_lineage resource accepts the same validated query parameters', async () => {
     const { context, mock } = mockService()
-    const lineage = await createDataRegistry().lineage('strategy_comparison', context, filters)
+    const registry = createDataRegistry()
+    const query = await registry.query('strategy_comparison', { filters }, context)
+    const lineage = await registry.lineage('strategy_comparison', context, filters)
     expect(lineage.transaction_revision).toBe(9)
     expect(lineage.calculation_version).toBe('strategy-comparison-v0.1')
+    expect(lineage.source_version).toBe(query.lineage.source_version)
     expect(mock.strategyComparison).toHaveBeenCalledTimes(1)
+    expect(mock.cachedStrategyComparison).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns the fixed three rows in one snapshot and rejects cursor pagination', async () => {
+    const registry = createDataRegistry()
+    const { context, mock } = mockService()
+    expect(registry.describe('strategy_comparison').pagination).toEqual({
+      supported: false,
+      default_page_size: null,
+      max_page_size: null,
+      cursor: null,
+    })
+    await expect(registry.query('strategy_comparison', {
+      filters,
+      pagination: { limit: 1 },
+    }, context)).rejects.toMatchObject({ code: 'PAGINATION_NOT_SUPPORTED' })
+    expect(mock.strategyComparison).not.toHaveBeenCalled()
   })
 
   it.each([

@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { strategyComparisonRequestSchema } from '../src/lib/strategy-comparison-contracts'
+import { PortfolioReadSession } from '../worker/ai/read-session'
 import { adjustedStrategyPriceTwd, runStrategyComparison } from '../worker/strategy-comparison-service'
 
 const request = {
@@ -57,6 +58,11 @@ function fixtureFetcher(adjustedClose: Array<number | null> = [100, 110, 121, 13
   }), { status: 200 }))
 }
 
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
+
 describe('Strategy Comparison input integrity / read-only service', () => {
   it('rejects impossible calendar dates, unsupported tickers and excessive windows', () => {
     for (const patch of [
@@ -80,6 +86,7 @@ describe('Strategy Comparison input integrity / read-only service', () => {
     expect(result.transactionRevision).toBe(1)
     expect(result.strategies.dca.grossContributionsTwd).toBe(280000)
     expect(result.strategies.lumpSum.grossContributionsTwd).toBe(280000)
+    expect(result.marketDataVersion).toMatch(/^YAHOO_FINANCE_CHART_ADJUSTED_CLOSE_PROXY:v0\.1:[0-9a-f]{64}$/)
     const transactionsQuery = calls.filter((c) => c.sql.includes('FROM transactions'))
     expect(transactionsQuery).toHaveLength(1)
     expect(transactionsQuery[0].bind).toEqual(['ds1', 'synthetic-user'])
@@ -151,5 +158,21 @@ describe('Strategy Comparison input integrity / read-only service', () => {
       db, { id: 'synthetic-user', email: 'not-real@example.test' },
       request, { now: new Date('2026-04-02T00:00:00Z'), fetcher: fixtureFetcher() as typeof fetch },
     )).rejects.toThrow('TRANSACTION_VERSION_CONFLICT')
+  })
+
+  it('reuses one completed Yahoo snapshot for MCP query and lineage sessions', async () => {
+    const { db } = fixtureDatabase()
+    const fetcher = fixtureFetcher()
+    vi.stubGlobal('fetch', fetcher)
+    const user = { id: 'mcp-cache-regression-user', email: 'not-real@example.test' }
+    const first = new PortfolioReadSession(db, user, new Date('2026-04-02T00:00:00Z'))
+    const second = new PortfolioReadSession(db, user, new Date('2026-04-02T00:00:30Z'))
+
+    const queryResult = await first.strategyComparison(request)
+    const lineageResult = await second.cachedStrategyComparison(request)
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(lineageResult).toBe(queryResult)
+    expect(lineageResult.marketDataVersion).toBe(queryResult.marketDataVersion)
   })
 })

@@ -40,6 +40,28 @@ function daysBetween(left: string, right: string): number {
   return Math.round((Date.parse(right + 'T00:00:00Z') - Date.parse(left + 'T00:00:00Z')) / 86400000)
 }
 
+async function strategyMarketDataVersion(
+  histories: Awaited<ReturnType<typeof fetchYahooStrategyHistory>>[],
+  fxEntries: ReadonlyArray<readonly [string, Awaited<ReturnType<typeof fetchYahooDailyHistory>>]>,
+): Promise<string> {
+  const canonical = JSON.stringify({
+    securities: histories.map((history) => ({
+      ticker: history.ticker,
+      quoteUnit: history.quoteUnit,
+      quoteScaleToCurrency: history.quoteScaleToCurrency,
+      bars: history.bars,
+    })),
+    fx: [...fxEntries]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([currency, history]) => ({ currency, bars: history.bars })),
+  })
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical))
+  const hex = [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+  return `YAHOO_FINANCE_CHART_ADJUSTED_CLOSE_PROXY:v0.1:${hex}`
+}
+
 function latestFxOnOrBefore(
   bars: Array<{ date: string; rawClose: number }>,
   date: string,
@@ -94,6 +116,7 @@ export async function runStrategyComparison(
     return [currency, await fetchYahooDailyHistory(instrument, fetcher, now, request.endDate)] as const
   }))
   const fxByCurrency = new Map(fxEntries)
+  const marketDataVersion = await strategyMarketDataVersion(histories, fxEntries)
 
   const coverageEnd = request.endDate < now.toISOString().slice(0, 10)
     ? request.endDate : now.toISOString().slice(0, 10)
@@ -165,6 +188,7 @@ export async function runStrategyComparison(
       'Transaction Replay 將實際 SECURITY 買進視為投入、賣出淨款視為收回；它是交易路徑模擬，不是標準外部入出金 PME。',
     ],
     marketSource: 'YAHOO_FINANCE_CHART',
+    marketDataVersion,
     transactionRevision: portfolio.cloudRevision,
     allocations,
     instruments: histories.map((history) => ({
