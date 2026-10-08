@@ -1,5 +1,4 @@
-import { McpServer } from '@modelcontextprotocol/server'
-import { createMcpHandler } from 'agents/mcp/server'
+import { createMcpHandler, McpServer } from '@modelcontextprotocol/server'
 import { z } from 'zod'
 import type { Bindings } from '../auth'
 import { runAudited } from './audit'
@@ -149,8 +148,5 @@ export function createPortfolioMcpHandler(env: Bindings, user: AiUser, request: 
     })
 
     return server
-  }, {
-    route: '/mcp',
-    corsOptions: false,
   })
 }
