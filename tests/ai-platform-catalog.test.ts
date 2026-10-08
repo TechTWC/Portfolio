@@ -22,11 +22,16 @@ describe('AI semantic platform catalog', () => {
       'max_drawdown',
       'nav',
       'realized_pl',
-      'security_xirr',
       'twr',
       'unrealized_pl',
       'xirr',
     ])
+  })
+
+  it('does not expose the deferred Security XIRR metric', async () => {
+    const registry = createMetricRegistry()
+    expect(registry.list().map((metric) => metric.name)).not.toContain('security_xirr')
+    await expect(registry.getMetric('security_xirr', {}, {} as never)).rejects.toThrow()
   })
 
   it('does not advertise an unsupported central security-performance quality domain', () => {
