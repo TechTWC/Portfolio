@@ -44,7 +44,7 @@ a **new, isolated database** and verification before any production cutover.
 
 ## 3. Execute the zero-cloud synthetic rehearsal
 
-Requires Python 3 with standard-library `sqlite3` enabled. From the repository
+Requires Python 3.10+ with standard-library `sqlite3` enabled. From the repository
 root, with no Cloudflare credentials:
 
 ```sh
