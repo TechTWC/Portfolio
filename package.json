@@ -18,9 +18,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
-    "agents": "^0.21.0",
     "dexie": "4.4.4",
-    "hono": "4.12.34",
+    "hono": "4.13.13",
     "jose": "6.2.3",
     "react": "19.2.7",
     "react-dom": "19.2.7",
@@ -28,18 +27,21 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.47.0",
-    "@cloudflare/workers-types": "5.20260724.1",
+    "@cloudflare/vite-plugin": "1.62.5",
+    "@cloudflare/workers-types": "5.20261006.1",
     "@types/node": "22.20.1",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.3",
     "typescript": "7.0.2",
     "vite": "8.1.5",
-    "vitest": "4.1.10",
-    "wrangler": "4.114.0"
+    "vitest": "4.1.11",
+    "wrangler": "4.147.0"
   },
   "overrides": {
-    "undici": "7.29.0"
+    "undici": "7.29.1",
+    "miniflare": {
+      "sharp": "0.35.5"
+    }
   }
 }

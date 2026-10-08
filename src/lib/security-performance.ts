@@ -1,25 +1,19 @@
 import type { NormalizedTransaction } from './contracts'
-import { findXirrRoots } from './performance'
 
 const EPSILON = 1e-9
 
-export const SECURITY_INVESTMENT_CALCULATION_VERSION = 'estimated-security-investment-xirr-v0.1'
+export const SECURITY_CASH_FLOW_CALCULATION_VERSION = 'estimated-security-cash-flow-v0.1'
 
-export type SecurityPerformanceIssueCode =
+export type SecurityCashFlowIssueCode =
   | 'MISSING_VALUATION'
   | 'INCOMPLETE_VALUATION'
   | 'INVALID_VALUATION_DATE'
   | 'TRANSACTION_AFTER_VALUATION_DATE'
   | 'MISSING_SECURITY_FLOW_FX'
   | 'INVALID_SECURITY_PROCEEDS'
-  | 'NO_SECURITY_PURCHASE'
-  | 'NO_POSITIVE_CASH_FLOW'
-  | 'ZERO_TIME_SPAN'
-  | 'XIRR_NOT_FOUND'
-  | 'MULTIPLE_XIRR_ROOTS'
 
-export type SecurityPerformanceIssue = {
-  code: SecurityPerformanceIssueCode
+export type SecurityCashFlowIssue = {
+  code: SecurityCashFlowIssueCode
   severity: 'BLOCKING'
   message: string
   sourceRowNumbers: number[]
@@ -35,27 +29,26 @@ export type SecurityCashFlow = {
   sourceRowNumbers: number[]
 }
 
-export type SecurityInvestmentPerformanceInput = {
+export type SecurityCashFlowSummaryInput = {
   transactions: NormalizedTransaction[]
   valuationDate: string | null
   positionValuationComplete: boolean
   terminalPositionValueTwd: number | null
 }
 
-export type SecurityInvestmentPerformance = {
+export type SecurityCashFlowSummary = {
   valuationDate: string | null
   complete: boolean
   estimated: true
-  calculationVersion: typeof SECURITY_INVESTMENT_CALCULATION_VERSION
+  calculationVersion: typeof SECURITY_CASH_FLOW_CALCULATION_VERSION
   grossPurchasesTwd: number
   grossSaleProceedsTwd: number
   netSecurityCapitalDeployedTwd: number
   terminalPositionValueTwd: number | null
   estimatedGainTwd: number | null
   securityMultiple: number | null
-  xirr: number | null
   securityCashFlows: SecurityCashFlow[]
-  issues: SecurityPerformanceIssue[]
+  issues: SecurityCashFlowIssue[]
   blockingIssueCount: number
 }
 
@@ -69,21 +62,10 @@ function isIsoDate(value: string): boolean {
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
 }
 
-function aggregateFlows(events: SecurityCashFlow[]): Array<{ date: string; amount: number }> {
-  const byDate = new Map<string, number>()
-  for (const event of events) {
-    byDate.set(event.date, (byDate.get(event.date) ?? 0) + event.signedAmountTwd)
-  }
-  return [...byDate.entries()]
-    .map(([date, amount]) => ({ date, amount: clean(amount) }))
-    .filter((flow) => Math.abs(flow.amount) > EPSILON)
-    .sort((a, b) => a.date.localeCompare(b.date))
-}
-
-export function buildSecurityInvestmentPerformance(
-  input: SecurityInvestmentPerformanceInput,
-): SecurityInvestmentPerformance {
-  const issues: SecurityPerformanceIssue[] = []
+export function buildSecurityCashFlowSummary(
+  input: SecurityCashFlowSummaryInput,
+): SecurityCashFlowSummary {
+  const issues: SecurityCashFlowIssue[] = []
   const events: SecurityCashFlow[] = []
   const valuationDate = input.valuationDate
 
@@ -125,7 +107,7 @@ export function buildSecurityInvestmentPerformance(
       issues.push({
         code: 'TRANSACTION_AFTER_VALUATION_DATE',
         severity: 'BLOCKING',
-        message: `有 ${laterRows.length} 筆交易晚於估值日；目前不能安全建立同一時點的推估報酬`,
+        message: `有 ${laterRows.length} 筆證券交易晚於估值日；目前不能安全建立同一時點的證券投入摘要`,
         sourceRowNumbers: laterRows.map((row) => row.sourceRowNumber).sort((a, b) => a - b),
       })
     }
@@ -138,6 +120,23 @@ export function buildSecurityInvestmentPerformance(
     if (row.transactionType !== 'SECURITY') continue
     if (valuationDate && isIsoDate(valuationDate) && row.tradeDate > valuationDate) continue
 
+    const amountNative = row.amountForeign > 0
+      ? row.amountForeign
+      : Math.abs(row.quantity) * row.price
+    const purchase = row.quantity > 0
+    const netAmountNative = purchase ? amountNative + row.fee : amountNative - row.fee
+    if (!Number.isFinite(netAmountNative) || (purchase ? netAmountNative <= 0 : netAmountNative < -EPSILON)) {
+      issues.push({
+        code: 'INVALID_SECURITY_PROCEEDS',
+        severity: 'BLOCKING',
+        message: `第 ${row.sourceRowNumber} 列證券交易扣除費用後金額無效`,
+        sourceRowNumbers: [row.sourceRowNumber],
+      })
+      continue
+    }
+
+    if (!purchase && netAmountNative <= EPSILON) continue
+
     const rate = row.currency === 'TWD' ? 1 : row.fxRate
     if (rate === null || !Number.isFinite(rate) || rate <= 0) {
       issues.push({
@@ -148,23 +147,6 @@ export function buildSecurityInvestmentPerformance(
       })
       continue
     }
-
-    const amountNative = row.amountForeign > 0
-      ? row.amountForeign
-      : Math.abs(row.quantity) * row.price
-    const purchase = row.quantity > 0
-    const netAmountNative = purchase ? amountNative + row.fee : amountNative - row.fee
-    if (!Number.isFinite(netAmountNative) || (purchase ? netAmountNative <= 0 : netAmountNative < 0)) {
-      issues.push({
-        code: 'INVALID_SECURITY_PROCEEDS',
-        severity: 'BLOCKING',
-        message: `第 ${row.sourceRowNumber} 列證券交易扣除費用後金額無效`,
-        sourceRowNumbers: [row.sourceRowNumber],
-      })
-      continue
-    }
-
-    if (!purchase && netAmountNative === 0) continue
 
     const amountTwd = clean(netAmountNative * rate)
     events.push({
@@ -204,75 +186,27 @@ export function buildSecurityInvestmentPerformance(
     ? input.terminalPositionValueTwd
     : null
   const netSecurityCapitalDeployedTwd = clean(grossPurchasesTwd - grossSaleProceedsTwd)
-  const estimatedGainTwd = terminalPositionValueTwd === null
+  const summaryInputsComplete = issues.length === 0
+  const estimatedGainTwd = terminalPositionValueTwd === null || !summaryInputsComplete
     ? null
     : clean(terminalPositionValueTwd + grossSaleProceedsTwd - grossPurchasesTwd)
-  const securityMultiple = terminalPositionValueTwd === null || grossPurchasesTwd <= EPSILON
+  const securityMultiple = terminalPositionValueTwd === null
+    || grossPurchasesTwd <= EPSILON
+    || !summaryInputsComplete
     ? null
     : (terminalPositionValueTwd + grossSaleProceedsTwd) / grossPurchasesTwd
 
-  if (grossPurchasesTwd <= EPSILON) {
-    issues.push({
-      code: 'NO_SECURITY_PURCHASE',
-      severity: 'BLOCKING',
-      message: '沒有可辨識的證券買進，推估 XIRR 無法定義',
-      sourceRowNumbers: [],
-    })
-  }
-
-  const flows = aggregateFlows(events)
-  if (!flows.some((flow) => flow.amount > EPSILON)) {
-    issues.push({
-      code: 'NO_POSITIVE_CASH_FLOW',
-      severity: 'BLOCKING',
-      message: '沒有賣出收入或期末持倉市值等正現金流，推估 XIRR 無法定義',
-      sourceRowNumbers: [],
-    })
-  }
-
-  if (flows.length >= 2 && flows[0].date === flows[flows.length - 1].date) {
-    issues.push({
-      code: 'ZERO_TIME_SPAN',
-      severity: 'BLOCKING',
-      message: '所有證券現金流都在同一天，無法年化為推估 XIRR',
-      sourceRowNumbers: [],
-    })
-  }
-
-  let xirr: number | null = null
-  if (issues.length === 0) {
-    const roots = findXirrRoots(flows)
-    if (roots.length === 0) {
-      issues.push({
-        code: 'XIRR_NOT_FOUND',
-        severity: 'BLOCKING',
-        message: '在允許的利率區間內找不到推估 XIRR 解',
-        sourceRowNumbers: [],
-      })
-    } else if (roots.length > 1) {
-      issues.push({
-        code: 'MULTIPLE_XIRR_ROOTS',
-        severity: 'BLOCKING',
-        message: `證券現金流存在 ${roots.length} 個 XIRR 解，系統不會任選其中一個`,
-        sourceRowNumbers: [],
-      })
-    } else {
-      xirr = roots[0]
-    }
-  }
-
   return {
     valuationDate,
-    complete: issues.length === 0 && xirr !== null,
+    complete: summaryInputsComplete,
     estimated: true,
-    calculationVersion: SECURITY_INVESTMENT_CALCULATION_VERSION,
+    calculationVersion: SECURITY_CASH_FLOW_CALCULATION_VERSION,
     grossPurchasesTwd,
     grossSaleProceedsTwd,
     netSecurityCapitalDeployedTwd,
     terminalPositionValueTwd,
     estimatedGainTwd,
     securityMultiple,
-    xirr,
     securityCashFlows: events,
     issues,
     blockingIssueCount: issues.length,

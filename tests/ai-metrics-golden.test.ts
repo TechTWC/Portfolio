@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildCurrentPerformance } from '../src/lib/performance'
-import { buildSecurityInvestmentPerformance } from '../src/lib/security-performance'
+import { buildSecurityCashFlowSummary } from '../src/lib/security-performance'
 import type { StoredTransaction } from '../src/lib/contracts'
 import { createDataRegistry, createMetricRegistry } from '../worker/ai/platform'
 import type { PortfolioReadSession } from '../worker/ai/read-session'
@@ -56,7 +56,7 @@ function baseSession(overrides: Record<string, unknown> = {}) {
     valuationComplete: true,
     terminalAssetsTwd: 1100,
   })
-  const securityPerformance = buildSecurityInvestmentPerformance({
+  const securityCashFlowSummary = buildSecurityCashFlowSummary({
     transactions: [securityPurchase],
     valuationDate: '2026-01-01',
     positionValuationComplete: true,
@@ -83,7 +83,7 @@ function baseSession(overrides: Record<string, unknown> = {}) {
       revision: 3, run: { dataVersion: 'market-data-v1.0.0', latestBarDate: '2026-01-01' },
       freshness: 'CURRENT', freshnessIssues: [],
     }),
-    securityPerformance: async () => securityPerformance,
+    securityCashFlowSummary: async () => securityCashFlowSummary,
     currentAnalytics: async () => currentAnalytics,
     analytics: async () => currentAnalytics,
     ...overrides,
@@ -136,31 +136,6 @@ describe('AI official Metric golden parity', () => {
     expect(result.value).toBeCloseTo(0.1, 10)
   })
 
-  it('returns the distinct estimated security XIRR without changing official XIRR semantics', async () => {
-    const registry = createMetricRegistry()
-    const estimated = await registry.getMetric('security_xirr', {}, context())
-    const official = await registry.getMetric('xirr', {}, context())
-
-    expect(estimated).toMatchObject({
-      metric: 'security_xirr',
-      status: 'ESTIMATED',
-      calculation_version: 'estimated-security-investment-xirr-v0.1',
-    })
-    expect(estimated.value).toBeCloseTo(0.1, 9)
-    expect(estimated.issues).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'ESTIMATED_SECURITY_RETURN_SCOPE', severity: 'WARNING' }),
-      expect.objectContaining({
-        type: 'UNRECORDED_DISTRIBUTIONS_AND_CORPORATE_ACTIONS', severity: 'WARNING',
-      }),
-      expect.objectContaining({ type: 'TRADE_DATE_AND_RECORDED_FX_ASSUMPTIONS', severity: 'WARNING' }),
-    ]))
-    expect(official.value).toBeCloseTo(0.1, 9)
-    expect(registry.list().find((metric) => metric.name === 'xirr')?.description)
-      .toContain('Official')
-    expect(registry.list().find((metric) => metric.name === 'security_xirr')?.description)
-      .toContain('Estimated')
-  })
-
   it('exposes the exact estimated security cash-flow chain as a read-only resource', async () => {
     const result = await createDataRegistry().query('security_cash_flows', {
       sort: { field: 'date', direction: 'asc' },
@@ -170,7 +145,8 @@ describe('AI official Metric golden parity', () => {
     expect(result.data_quality.issues).toContainEqual(expect.objectContaining({
       type: 'UNRECORDED_DISTRIBUTIONS_AND_CORPORATE_ACTIONS', severity: 'WARNING',
     }))
-    expect(result.lineage.calculation_version).toBe('estimated-security-investment-xirr-v0.1')
+    expect(result.lineage.calculation_version).toBe('estimated-security-cash-flow-v0.1')
+    expect(result.lineage.source_version).toBe('valuation-v0.3')
     expect(result.rows).toEqual([
       expect.objectContaining({
         date: '2025-01-01', type: 'PURCHASE', signed_amount_twd: -100, source: 'TRANSACTION',

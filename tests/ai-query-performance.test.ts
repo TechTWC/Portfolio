@@ -312,18 +312,35 @@ describe('AI on-demand query performance', () => {
     expect(fixture.executedSql.every((sql) => /^\s*SELECT\b/i.test(sql))).toBe(true)
   })
 
-  it('does not calculate security XIRR for unrelated analytics consumers', async () => {
+  it('does not build the security cash-flow summary for unrelated analytics consumers', async () => {
     const fixture = productionDatabase()
     const session = new PortfolioReadSession(fixture.db, {
       id: 'lazy-security-user', email: 'owner@example.test',
     }, new Date('2026-08-18T00:00:00Z'))
-    const securityPerformance = vi.spyOn(session, 'securityPerformance')
+    const securityCashFlowSummary = vi.spyOn(session, 'securityCashFlowSummary')
 
     await withinTimeout(createDataRegistry().query('portfolio_snapshot', {}, context(session)))
     await withinTimeout(createDataRegistry().query('positions', {}, context(session)))
     await withinTimeout(createDataRegistry().query('data_quality', {}, context(session)))
 
-    expect(securityPerformance).not.toHaveBeenCalled()
+    expect(securityCashFlowSummary).not.toHaveBeenCalled()
+  })
+
+  it('lists security cash flows through the dedicated summary path', async () => {
+    const session = new PortfolioReadSession(securityLineageDatabase({
+      currentDatasetId: 'dataset-current',
+      snapshotDatasetId: 'dataset-current',
+    }), { id: 'cash-flow-only-user', email: 'owner@example.test' }, new Date('2026-01-02T00:00:00Z'))
+    const securityCashFlowSummary = vi.spyOn(session, 'securityCashFlowSummary')
+    const currentAnalytics = vi.spyOn(session, 'currentAnalytics')
+
+    const result = await withinTimeout(createDataRegistry().query('security_cash_flows', {
+      sort: { field: 'date', direction: 'asc' },
+    }, context(session)))
+
+    expect(result.rows).toHaveLength(2)
+    expect(securityCashFlowSummary).toHaveBeenCalledTimes(1)
+    expect(currentAnalytics).not.toHaveBeenCalled()
   })
 
   it('keeps stale security cash flows bound to the valuation snapshot dataset and lineage', async () => {
@@ -348,43 +365,4 @@ describe('AI on-demand query performance', () => {
     ])
   })
 
-  it('keeps stale security XIRR metric lineage bound to the valuation snapshot transaction revision', async () => {
-    const session = new PortfolioReadSession(securityLineageDatabase({
-      currentDatasetId: 'dataset-current',
-      snapshotDatasetId: 'dataset-snapshot',
-    }), { id: 'stale-metric-user', email: 'owner@example.test' }, new Date('2026-01-02T00:00:00Z'))
-
-    const result = await createMetricRegistry().getMetric('security_xirr', {}, context(session))
-
-    expect(result.status).toBe('STALE')
-    expect(result.value).toBeNull()
-    expect(result.lineage.transaction_revision).toBe(1)
-    expect(result.issues).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'ESTIMATED_SECURITY_RETURN_SCOPE', severity: 'WARNING' }),
-      expect.objectContaining({
-        type: 'UNRECORDED_DISTRIBUTIONS_AND_CORPORATE_ACTIONS', severity: 'WARNING',
-      }),
-      expect.objectContaining({ type: 'TRADE_DATE_AND_RECORDED_FX_ASSUMPTIONS', severity: 'WARNING' }),
-    ]))
-  })
-
-  it('calculates security XIRR when only an unrelated cash wallet is unvalued', async () => {
-    const session = new PortfolioReadSession(securityLineageDatabase({
-      currentDatasetId: 'dataset-current',
-      snapshotDatasetId: 'dataset-current',
-      includeUnvaluedUsdCash: true,
-    }), { id: 'cash-user', email: 'owner@example.test' }, new Date('2026-01-02T00:00:00Z'))
-
-    const analytics = await session.currentAnalytics()
-    const securityPerformance = await session.securityPerformance()
-    const metric = await createMetricRegistry().getMetric('security_xirr', {}, context(session))
-
-    expect(analytics.valuationBundle.valuation?.complete).toBe(false)
-    expect(analytics.valuationBundle.valuation?.cash).toContainEqual(expect.objectContaining({
-      currency: 'USD', marketValueTwd: null,
-    }))
-    expect(securityPerformance.complete).toBe(true)
-    expect(metric.status).toBe('ESTIMATED')
-    expect(metric.value).toBeCloseTo(0.1, 9)
-  })
 })
