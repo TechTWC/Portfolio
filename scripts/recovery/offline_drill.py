@@ -102,15 +102,15 @@ def database_fingerprint(connection: sqlite3.Connection) -> dict:
             "sha256": canonical_hash(ordered),
         })
     revisions = {
-        "transaction": connection.execute(
+        "transaction": [encoded(tuple(row)) for row in connection.execute(
             "SELECT cloud_revision FROM portfolio_state ORDER BY user_id"
-        ).fetchall(),
-        "valuation": connection.execute(
+        ).fetchall()],
+        "valuation": [encoded(tuple(row)) for row in connection.execute(
             "SELECT valuation_revision FROM valuation_state ORDER BY user_id"
-        ).fetchall(),
-        "market": connection.execute(
+        ).fetchall()],
+        "market": [encoded(tuple(row)) for row in connection.execute(
             "SELECT market_revision FROM market_state ORDER BY user_id"
-        ).fetchall(),
+        ).fetchall()],
     }
     return {
         "schema_sha256": canonical_hash([encoded(tuple(row)) for row in schema]),
