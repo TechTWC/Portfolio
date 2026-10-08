@@ -45,7 +45,8 @@ jobs:
           CLOUDFLARE_ACCESS_AUD: test-audience
           CLOUDFLARE_ACCESS_TEAM_DOMAIN: https://techtwc.cloudflareaccess.com
           CLOUDFLARE_MARKET_REFRESH_CRON: "0 23 * * 1-5"
+          CLOUDFLARE_STRATEGY_RATE_LIMIT_NAMESPACE_ID: "29002"
         run: |
           node scripts/render-wrangler-config.mjs
-          node --input-type=module -e "import { readFileSync } from 'node:fs'; const c=JSON.parse(readFileSync('.wrangler.staging.generated.jsonc','utf8')); if(c.name!=='portfolio-analyzer-staging'||c.d1_databases[0].database_id!==process.env.CLOUDFLARE_D1_DATABASE_ID||c.vars?.AUTH_MODE!=='access'||c.vars?.POLICY_AUD!==process.env.CLOUDFLARE_ACCESS_AUD||c.vars?.TEAM_DOMAIN!==process.env.CLOUDFLARE_ACCESS_TEAM_DOMAIN||c.triggers?.crons?.[0]!==process.env.CLOUDFLARE_MARKET_REFRESH_CRON||c.vars?.DEV_USER_EMAIL) process.exit(1)"
+          node --input-type=module -e "import { readFileSync } from 'node:fs'; const c=JSON.parse(readFileSync('.wrangler.staging.generated.jsonc','utf8')); const r=c.ratelimits?.find((x)=>x.name==='STRATEGY_RATE_LIMITER'); if(c.name!=='portfolio-analyzer-staging'||c.d1_databases[0].database_id!==process.env.CLOUDFLARE_D1_DATABASE_ID||c.vars?.AUTH_MODE!=='access'||c.vars?.POLICY_AUD!==process.env.CLOUDFLARE_ACCESS_AUD||c.vars?.TEAM_DOMAIN!==process.env.CLOUDFLARE_ACCESS_TEAM_DOMAIN||c.triggers?.crons?.[0]!==process.env.CLOUDFLARE_MARKET_REFRESH_CRON||r?.namespace_id!==process.env.CLOUDFLARE_STRATEGY_RATE_LIMIT_NAMESPACE_ID||r?.simple?.limit!==6||r?.simple?.period!==60||c.vars?.DEV_USER_EMAIL) process.exit(1)"
           rm .wrangler.staging.generated.jsonc

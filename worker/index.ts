@@ -186,7 +186,9 @@ app.post('/api/strategy-comparison', async (c) => {
   const parsed = strategyComparisonRequestSchema.safeParse(await c.req.json().catch(() => null))
   if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? '策略比較參數錯誤' }, 400)
   try {
-    return c.json(await runStrategyComparison(c.env.DB, c.get('user'), parsed.data))
+    return c.json(await runStrategyComparison(c.env.DB, c.get('user'), parsed.data, {
+      rateLimiter: c.env.STRATEGY_RATE_LIMITER,
+    }))
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (message === 'NO_ACTIVE_DATASET') {
@@ -194,6 +196,12 @@ app.post('/api/strategy-comparison', async (c) => {
     }
     if (message === 'TRANSACTION_VERSION_CONFLICT') {
       return c.json({ error: '策略比較期間交易版本變更，請重新執行比較', code: message }, 409)
+    }
+    if (message === 'STRATEGY_RATE_LIMITED') {
+      return c.json({
+        error: '策略比較請求過於頻繁，請稍後再試',
+        code: message,
+      }, 429)
     }
     return c.json({
       error: `策略比較行情或計算失敗：${message}`,

@@ -83,10 +83,16 @@ export async function runStrategyComparison(
   db: D1Database,
   user: User,
   request: StrategyComparisonRequest,
-  options: { fetcher?: typeof fetch; now?: Date } = {},
+  options: { fetcher?: typeof fetch; now?: Date; rateLimiter?: RateLimit } = {},
 ): Promise<StrategyComparisonResponse> {
   const fetcher = options.fetcher ?? fetch
   const now = options.now ?? new Date()
+  if (options.rateLimiter) {
+    const admission = await options.rateLimiter.limit({
+      key: `strategy-comparison:${user.id}`,
+    })
+    if (!admission.success) throw new Error('STRATEGY_RATE_LIMITED')
+  }
   const portfolio = await getPortfolioState(db, user.id)
   if (!portfolio.activeDatasetId || portfolio.cloudRevision <= 0) {
     throw new Error('NO_ACTIVE_DATASET')
@@ -113,7 +119,13 @@ export async function runStrategyComparison(
       providerSymbol: yahooSymbolForFx(currency),
       startDate: subtractDays(request.startDate, FX_LOOKBACK_DAYS),
     }
-    return [currency, await fetchYahooDailyHistory(instrument, fetcher, now, request.endDate)] as const
+    return [currency, await fetchYahooDailyHistory(
+      instrument,
+      fetcher,
+      now,
+      request.endDate,
+      { rejectMissingTimestampedClose: true },
+    )] as const
   }))
   const fxByCurrency = new Map(fxEntries)
   const marketDataVersion = await strategyMarketDataVersion(histories, fxEntries)

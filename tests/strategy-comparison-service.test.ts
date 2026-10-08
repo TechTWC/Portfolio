@@ -160,6 +160,27 @@ describe('Strategy Comparison input integrity / read-only service', () => {
     )).rejects.toThrow('TRANSACTION_VERSION_CONFLICT')
   })
 
+  it('applies the shared per-user admission limit before database or Yahoo work', async () => {
+    const { db, calls } = fixtureDatabase()
+    const fetcher = fixtureFetcher()
+    const rateLimiter = {
+      limit: vi.fn(async () => ({ success: false })),
+    } as unknown as RateLimit
+
+    await expect(runStrategyComparison(
+      db,
+      { id: 'rate-limited-user', email: 'not-real@example.test' },
+      request,
+      { now: new Date('2026-04-02T00:00:00Z'), fetcher: fetcher as typeof fetch, rateLimiter },
+    )).rejects.toThrow('STRATEGY_RATE_LIMITED')
+
+    expect(rateLimiter.limit).toHaveBeenCalledWith({
+      key: 'strategy-comparison:rate-limited-user',
+    })
+    expect(calls).toHaveLength(0)
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
   it('reuses one completed Yahoo snapshot for MCP query and lineage sessions', async () => {
     const { db } = fixtureDatabase()
     const fetcher = fixtureFetcher()

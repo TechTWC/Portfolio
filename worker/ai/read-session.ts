@@ -255,6 +255,7 @@ export class PortfolioReadSession {
     readonly db: D1Database,
     readonly user: AiUser,
     readonly now = new Date(),
+    readonly strategyRateLimiter?: RateLimit,
   ) {}
 
   async strategyComparison(request: StrategyComparisonRequest): Promise<StrategyComparisonResponse> {
@@ -263,7 +264,10 @@ export class PortfolioReadSession {
     const cached = freshStrategyCacheEntry(key)
     if (cached) return cached.result
 
-    const result = runStrategyComparison(this.db, this.user, request, { now: this.now })
+    const result = runStrategyComparison(this.db, this.user, request, {
+      now: this.now,
+      rateLimiter: this.strategyRateLimiter,
+    })
     reserveStrategyCacheEntry(key, result)
     try {
       return await result

@@ -216,6 +216,28 @@ describe('Yahoo Finance daily raw-close adapter', () => {
       .rejects.toThrow('已超過 14 天')
   })
 
+  it('rejects an in-window timestamp whose raw close is missing instead of rolling DCA forward', async () => {
+    const dates = ['2026-01-02', '2026-02-02', '2026-03-02']
+    const fetcher = vi.fn().mockResolvedValue(response({
+      chart: { result: [{
+        meta: { currency: 'TWD', exchangeTimezoneName: 'Asia/Taipei' },
+        timestamp: dates.map((date) => Math.floor(Date.parse(`${date}T05:30:00Z`) / 1000)),
+        indicators: {
+          quote: [{ close: [100, null, 120] }],
+          adjclose: [{ adjclose: [100, null, 120] }],
+        },
+      }] },
+    }))
+
+    await expect(fetchYahooStrategyHistory(
+      '0050.TW',
+      '2026-01-01',
+      fetcher,
+      new Date('2026-03-03T00:00:00Z'),
+      '2026-03-02',
+    )).rejects.toThrow('MISSING_YAHOO_RAW_CLOSE: 0050.TW 2026-02-02')
+  })
+
   it('uses Yahoo quote symbols for TWD conversion', () => {
     expect(yahooSymbolForFx('USD')).toBe('TWD=X')
     expect(yahooSymbolForFx('EUR')).toBe('EURTWD=X')

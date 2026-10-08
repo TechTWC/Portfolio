@@ -30,7 +30,10 @@ function requestIdFrom(request: Request): string {
 export function createPortfolioMcpHandler(env: Bindings, user: AiUser, request: Request) {
   const dataRegistry = createDataRegistry()
   const metricRegistry = createMetricRegistry()
-  const context = { user, session: new PortfolioReadSession(env.DB, user) }
+  const context = {
+    user,
+    session: new PortfolioReadSession(env.DB, user, new Date(), env.STRATEGY_RATE_LIMITER),
+  }
   const requestId = requestIdFrom(request)
 
   return createMcpHandler(() => {

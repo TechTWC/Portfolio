@@ -132,6 +132,7 @@ and independently check the six-tool surface remains read-only.
 - Limit the comparison window to at most 30 years.
 - Snapshot transaction Dataset identity and Revision at the beginning of the simulation; verify both again before returning results. Concurrent activation is a version conflict (HTTP 409), not a valid simulation.
 - Do not silently drop a market trading date with missing adjusted close or foreign historical FX. Raise an unavailable/incomplete-data error instead of moving the DCA schedule and presenting a biased total-return estimate.
+- A Yahoo bar that has an in-window timestamp but a missing/invalid raw close also fails the strategy request closed; it must not be treated as an ordinary non-trading day.
 - Results report the **actual shared market dates** used; the requested end date may fall on a holiday or beyond the latest available completed bar.
 
 ## Independent Review correction: overseas quote units and bounded Yahoo history
@@ -140,3 +141,4 @@ and independently check the six-tool surface remains read-only.
 - Strategy and strategy-required FX Yahoo chart requests now set an **exclusive period2 on the day after requested endDate** (capped at current time). Existing official raw-close market refresh behavior with no explicit end bound remains unchanged.
 - Each selected instrument and the final shared executable market series must cover the requested start/end boundaries within a 14-calendar-day tolerance for holidays. Truncated in-window histories and missing quote/FX observations block the simulation, preventing reduced DCA principal from silently appearing comparable.
 - All related revisions are covered by synthetic golden, missing-data and calendar-boundary regressions.
+- API and MCP calculations share a Cloudflare-native per-user admission limit of six new strategy calculations per 60 seconds. Admission is checked before D1 or Yahoo work; identical MCP cache hits do not consume another calculation token. Staging and Production use separate rate-limit namespaces.

@@ -142,6 +142,14 @@ describe('MCP strategy comparison through existing read-only query_data', () => 
     expect(mock.strategyComparison).not.toHaveBeenCalled()
   })
 
+  it('surfaces the shared strategy rate limit without falling through to another calculation', async () => {
+    const { context, mock } = mockService()
+    mock.strategyComparison.mockRejectedValueOnce(new Error('STRATEGY_RATE_LIMITED'))
+    await expect(createDataRegistry().query('strategy_comparison', { filters }, context))
+      .rejects.toMatchObject({ code: 'STRATEGY_RATE_LIMITED' })
+    expect(mock.strategyComparison).toHaveBeenCalledTimes(1)
+  })
+
   it.each([
     [{ ...filters, allocations: '0050.TW:60,2330.TW:30' }],
     [{ ...filters, allocations: '0050.TW:100,0050.TW:0' }],

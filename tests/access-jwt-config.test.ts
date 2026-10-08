@@ -7,6 +7,7 @@ const workflow = readFileSync('.github/workflows/deploy-staging.yml', 'utf8')
 const resolver = readFileSync('scripts/resolve-access.mjs', 'utf8')
 const renderer = readFileSync('scripts/render-wrangler-config.mjs', 'utf8')
 const auth = readFileSync('worker/auth.ts', 'utf8')
+const wrangler = JSON.parse(readFileSync('wrangler.jsonc', 'utf8'))
 
 describe('Cloudflare Access JWT hardening configuration', () => {
   it('resolves the Access audience from the Cloudflare API during deployment', () => {
@@ -21,6 +22,7 @@ describe('Cloudflare Access JWT hardening configuration', () => {
     expect(renderer).toContain("AUTH_MODE: 'access'")
     expect(renderer).toContain('POLICY_AUD: policyAud')
     expect(renderer).toContain('TEAM_DOMAIN: teamDomain')
+    expect(renderer).toContain('strategyRateLimit.namespace_id = strategyRateLimitNamespaceId')
     expect(renderer).toContain('delete config.vars.DEV_USER_EMAIL')
   })
 
@@ -30,5 +32,13 @@ describe('Cloudflare Access JWT hardening configuration', () => {
     expect(auth).toContain('issuer: normalizedDomain')
     expect(auth).toContain('audience: policyAud')
     expect(auth).toContain("algorithms: ['RS256']")
+  })
+
+  it('configures a bounded Cloudflare strategy rate limiter', () => {
+    expect(wrangler.ratelimits).toContainEqual({
+      name: 'STRATEGY_RATE_LIMITER',
+      namespace_id: '29001',
+      simple: { limit: 6, period: 60 },
+    })
   })
 })

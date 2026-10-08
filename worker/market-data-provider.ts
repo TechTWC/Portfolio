@@ -90,6 +90,7 @@ async function fetchYahooChartHistory(
   fetcher: typeof fetch,
   now: Date,
   endDate?: string,
+  rejectMissingTimestampedClose = false,
 ): Promise<{
   providerCurrency: string
   rawQuoteUnit: string
@@ -140,10 +141,16 @@ async function fetchYahooChartHistory(
   for (let index = 0; index < timestamps.length; index += 1) {
     const timestamp = timestamps[index]
     const rawClose = closes[index]
-    if (!Number.isFinite(timestamp) || !Number.isFinite(rawClose) || Number(rawClose) <= 0) continue
+    if (!Number.isFinite(timestamp)) continue
     if (isCurrentSessionIncomplete(timestamp, regular, nowSeconds)) continue
     const date = calendarDateInTimezone(timestamp, exchangeTimezone)
     if (date < startDate || (endDate && date > endDate)) continue
+    if (!Number.isFinite(rawClose) || Number(rawClose) <= 0) {
+      if (rejectMissingTimestampedClose) {
+        throw new Error(`MISSING_YAHOO_RAW_CLOSE: ${providerSymbol} ${date}`)
+      }
+      continue
+    }
     const adjustedClose = adjusted[index]
     byDate.set(date, {
       date,
@@ -182,8 +189,16 @@ export async function fetchYahooDailyHistory(
   fetcher: typeof fetch,
   now = new Date(),
   endDate?: string,
+  options: { rejectMissingTimestampedClose?: boolean } = {},
 ): Promise<MarketInstrumentFetchResult> {
-  const result = await fetchYahooChartHistory(instrument.providerSymbol, instrument.startDate, fetcher, now, endDate)
+  const result = await fetchYahooChartHistory(
+    instrument.providerSymbol,
+    instrument.startDate,
+    fetcher,
+    now,
+    endDate,
+    options.rejectMissingTimestampedClose,
+  )
   if (instrument.instrumentType !== 'FX' && (!result.providerCurrency || result.providerCurrency !== instrument.currency)) {
     throw new Error(`${instrument.providerSymbol} 幣別為 ${result.providerCurrency || 'UNKNOWN'}，預期為 ${instrument.currency}`)
   }
@@ -205,7 +220,14 @@ export async function fetchYahooStrategyHistory(
 ): Promise<YahooStrategyHistory> {
   const normalizedTicker = ticker.trim().toUpperCase()
   if (!normalizedTicker) throw new Error('策略標的代號不得為空')
-  const result = await fetchYahooChartHistory(normalizedTicker, startDate, fetcher, now, endDate)
+  const result = await fetchYahooChartHistory(
+    normalizedTicker,
+    startDate,
+    fetcher,
+    now,
+    endDate,
+    true,
+  )
   if (!result.rawQuoteUnit) throw new Error(`${normalizedTicker} 行情來源未提供幣別`)
   const quote = strategyQuoteCurrency(result.rawQuoteUnit)
   return {

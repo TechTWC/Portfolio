@@ -168,6 +168,9 @@ async function loadStrategyResult(
     if (error instanceof Error && error.message === 'TRANSACTION_VERSION_CONFLICT') {
       throw new DataPlatformError('TRANSACTION_VERSION_CONFLICT', '計算期間交易版本已改變，請重新查詢')
     }
+    if (error instanceof Error && error.message === 'STRATEGY_RATE_LIMITED') {
+      throw new DataPlatformError('STRATEGY_RATE_LIMITED', '策略比較請求過於頻繁，請稍後再試')
+    }
     if (error instanceof Error && error.message === 'STRATEGY_RESULT_NOT_CACHED') {
       throw new DataPlatformError(
         'STRATEGY_LINEAGE_NOT_AVAILABLE',

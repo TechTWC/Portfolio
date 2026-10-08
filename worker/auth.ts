@@ -3,6 +3,7 @@ import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose'
 
 export type Bindings = {
   DB: D1Database
+  STRATEGY_RATE_LIMITER: RateLimit
   AUTH_MODE?: 'access' | 'dev'
   DEV_USER_EMAIL?: string
   POLICY_AUD?: string
