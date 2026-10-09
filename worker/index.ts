@@ -14,11 +14,13 @@ import {
 import { compareValuationMarks } from '../src/lib/valuation-diff'
 import { transactionBindingMatches } from '../src/lib/valuation-lineage'
 import { marketDataRefreshRequestSchema } from '../src/lib/market-data-contracts'
+import { strategyComparisonRequestSchema } from '../src/lib/strategy-comparison-contracts'
 import { requireExistingUser, requireUser, type Bindings, type Variables } from './auth'
 import { createPortfolioMcpHandler } from './ai/mcp'
 import { getMarketDataBootstrap } from './market-data-repository'
 import { refreshMarketData } from './market-data-service'
 import { runScheduledMarketRefresh } from './market-refresh-scheduler'
+import { runStrategyComparison } from './strategy-comparison-service'
 import {
   activateDataset,
   currentRevision,
@@ -178,6 +180,34 @@ app.get('/api/market-data/bootstrap', async (c) => {
     c.get('user'),
     c.req.query('includeMarks') !== '0',
   ))
+})
+
+app.post('/api/strategy-comparison', async (c) => {
+  const parsed = strategyComparisonRequestSchema.safeParse(await c.req.json().catch(() => null))
+  if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? '策略比較參數錯誤' }, 400)
+  try {
+    return c.json(await runStrategyComparison(c.env.DB, c.get('user'), parsed.data, {
+      rateLimiter: c.env.STRATEGY_RATE_LIMITER,
+    }))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message === 'NO_ACTIVE_DATASET') {
+      return c.json({ error: '目前沒有 ACTIVE 交易資料，無法建立 Transaction Replay', code: message }, 422)
+    }
+    if (message === 'TRANSACTION_VERSION_CONFLICT') {
+      return c.json({ error: '策略比較期間交易版本變更，請重新執行比較', code: message }, 409)
+    }
+    if (message === 'STRATEGY_RATE_LIMITED') {
+      return c.json({
+        error: '策略比較請求過於頻繁，請稍後再試',
+        code: message,
+      }, 429)
+    }
+    return c.json({
+      error: `策略比較行情或計算失敗：${message}`,
+      code: 'STRATEGY_COMPARISON_UNAVAILABLE',
+    }, 502)
+  }
 })
 
 app.post('/api/market-data/refresh', async (c) => {

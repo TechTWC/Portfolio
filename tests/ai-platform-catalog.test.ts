@@ -11,6 +11,7 @@ describe('AI semantic platform catalog', () => {
       'portfolio_snapshot',
       'positions',
       'security_cash_flows',
+      'strategy_comparison',
       'transactions',
       'valuations',
     ])

@@ -30,7 +30,10 @@ function requestIdFrom(request: Request): string {
 export function createPortfolioMcpHandler(env: Bindings, user: AiUser, request: Request) {
   const dataRegistry = createDataRegistry()
   const metricRegistry = createMetricRegistry()
-  const context = { user, session: new PortfolioReadSession(env.DB, user) }
+  const context = {
+    user,
+    session: new PortfolioReadSession(env.DB, user, new Date(), env.STRATEGY_RATE_LIMITER),
+  }
   const requestId = requestIdFrom(request)
 
   return createMcpHandler(() => {
@@ -140,7 +143,7 @@ export function createPortfolioMcpHandler(env: Bindings, user: AiUser, request: 
       if (!name) throw new DataPlatformError('INVALID_LINEAGE_TARGET', 'target.name 為必填')
       const value = await audited('get_data_lineage', `${target.kind}:${name}`, async () => ({
         value: target.kind === 'resource'
-          ? await dataRegistry.lineage(name, context)
+          ? await dataRegistry.lineage(name, context, target.parameters as Record<string, JsonScalar> | undefined ?? {})
           : await metricRegistry.lineage(name, target.parameters as Record<string, JsonScalar> | undefined ?? {}, context),
         rowCount: 1,
       }))

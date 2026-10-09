@@ -5,6 +5,7 @@ import type {
 } from '../src/lib/market-data-contracts'
 
 const MAX_STALE_DAYS = 10
+const MAX_BOUNDED_HISTORY_TAIL_GAP_DAYS = 14
 const MAX_BARS_PER_INSTRUMENT = 10_000
 
 type YahooChartResponse = {
@@ -23,6 +24,30 @@ type YahooChartResponse = {
     }> | null
     error?: { code?: string; description?: string } | null
   }
+}
+
+export type YahooStrategyHistory = {
+  ticker: string
+  currency: string
+  quoteUnit: string
+  quoteScaleToCurrency: number
+  exchangeTimezone: string
+  bars: MarketBar[]
+  latestCloseDate: string
+  latestRawClose: number
+}
+
+function strategyQuoteCurrency(unit: string): { currency: string; scale: number } {
+  // Yahoo quotes UK equities in pence/GBX rather than whole GBP.
+  if (unit === 'GBp' || unit === 'GBX') return { currency: 'GBP', scale: 0.01 }
+  if (!/^[A-Z]{3}$/.test(unit)) throw new Error(`UNSUPPORTED_YAHOO_QUOTE_UNIT: ${unit}`)
+  return { currency: unit, scale: 1 }
+}
+
+function addDays(date: string, count: number): string {
+  const parsed = new Date(date + 'T00:00:00Z')
+  parsed.setUTCDate(parsed.getUTCDate() + count)
+  return parsed.toISOString().slice(0, 10)
 }
 
 function unixSecondsAtUtcStart(date: string): number {
@@ -59,14 +84,30 @@ export function yahooSymbolForFx(currency: string): string {
   return `${normalized}TWD=X`
 }
 
-export async function fetchYahooDailyHistory(
-  instrument: MarketInstrument,
+async function fetchYahooChartHistory(
+  providerSymbol: string,
+  startDate: string,
   fetcher: typeof fetch,
-  now = new Date(),
-): Promise<MarketInstrumentFetchResult> {
-  const period1 = unixSecondsAtUtcStart(instrument.startDate)
-  const period2 = Math.floor(now.getTime() / 1000) + 86_400
-  const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(instrument.providerSymbol)}`)
+  now: Date,
+  endDate?: string,
+  rejectMissingTimestampedClose = false,
+): Promise<{
+  providerCurrency: string
+  rawQuoteUnit: string
+  exchangeTimezone: string
+  bars: MarketBar[]
+  latestCloseDate: string
+  latestRawClose: number
+}> {
+  const period1 = unixSecondsAtUtcStart(startDate)
+  const livePeriod2 = Math.floor(now.getTime() / 1000) + 86_400
+  const period2 = endDate
+    ? Math.min(livePeriod2, unixSecondsAtUtcStart(addDays(endDate, 1)))
+    : livePeriod2
+  if (!Number.isFinite(period1) || !Number.isFinite(period2) || period1 >= period2) {
+    throw new Error('INVALID_YAHOO_HISTORY_PERIOD')
+  }
+  const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(providerSymbol)}`)
   url.searchParams.set('period1', String(period1))
   url.searchParams.set('period2', String(period2))
   url.searchParams.set('interval', '1d')
@@ -76,22 +117,18 @@ export async function fetchYahooDailyHistory(
   const response = await fetcher(url.toString(), {
     headers: { accept: 'application/json', 'user-agent': 'PortfolioAnalyzer/1.0' },
   })
-  if (!response.ok) {
-    throw new Error(`${instrument.providerSymbol} 行情來源回應 HTTP ${response.status}`)
-  }
+  if (!response.ok) throw new Error(`${providerSymbol} 行情來源回應 HTTP ${response.status}`)
 
   const payload = await response.json() as YahooChartResponse
   const providerError = payload.chart?.error
   if (providerError) {
-    throw new Error(`${instrument.providerSymbol} 行情來源錯誤：${providerError.description ?? providerError.code ?? 'UNKNOWN'}`)
+    throw new Error(`${providerSymbol} 行情來源錯誤：${providerError.description ?? providerError.code ?? 'UNKNOWN'}`)
   }
   const result = payload.chart?.result?.[0]
-  if (!result) throw new Error(`${instrument.providerSymbol} 沒有行情資料`)
+  if (!result) throw new Error(`${providerSymbol} 沒有行情資料`)
 
-  const providerCurrency = result.meta?.currency?.trim().toUpperCase()
-  if (instrument.instrumentType !== 'FX' && providerCurrency && providerCurrency !== instrument.currency) {
-    throw new Error(`${instrument.providerSymbol} 幣別為 ${providerCurrency}，預期為 ${instrument.currency}`)
-  }
+  const rawQuoteUnit = result.meta?.currency?.trim() ?? ''
+  const providerCurrency = rawQuoteUnit.toUpperCase()
 
   const timestamps = result.timestamp ?? []
   const closes = result.indicators?.quote?.[0]?.close ?? []
@@ -104,10 +141,16 @@ export async function fetchYahooDailyHistory(
   for (let index = 0; index < timestamps.length; index += 1) {
     const timestamp = timestamps[index]
     const rawClose = closes[index]
-    if (!Number.isFinite(timestamp) || !Number.isFinite(rawClose) || Number(rawClose) <= 0) continue
+    if (!Number.isFinite(timestamp)) continue
     if (isCurrentSessionIncomplete(timestamp, regular, nowSeconds)) continue
     const date = calendarDateInTimezone(timestamp, exchangeTimezone)
-    if (date < instrument.startDate) continue
+    if (date < startDate || (endDate && date > endDate)) continue
+    if (!Number.isFinite(rawClose) || Number(rawClose) <= 0) {
+      if (rejectMissingTimestampedClose) {
+        throw new Error(`MISSING_YAHOO_RAW_CLOSE: ${providerSymbol} ${date}`)
+      }
+      continue
+    }
     const adjustedClose = adjusted[index]
     byDate.set(date, {
       date,
@@ -120,20 +163,81 @@ export async function fetchYahooDailyHistory(
 
   const bars = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date))
   if (bars.length > MAX_BARS_PER_INSTRUMENT) {
-    throw new Error(`${instrument.providerSymbol} 回傳 ${bars.length} 筆，超過安全上限 ${MAX_BARS_PER_INSTRUMENT} 筆`)
+    throw new Error(`${providerSymbol} 回傳 ${bars.length} 筆，超過安全上限 ${MAX_BARS_PER_INSTRUMENT} 筆`)
   }
   const latest = bars.at(-1)
-  if (!latest) throw new Error(`${instrument.providerSymbol} 沒有有效的已完成收盤價`)
+  if (!latest) throw new Error(`${providerSymbol} 沒有有效的已完成收盤價`)
   const today = now.toISOString().slice(0, 10)
-  if (daysBetween(latest.date, today) > MAX_STALE_DAYS) {
-    throw new Error(`${instrument.providerSymbol} 最新收盤日 ${latest.date} 已超過 ${MAX_STALE_DAYS} 天`)
+  const coverageEnd = endDate && endDate < today ? endDate : today
+  const maximumLag = endDate ? MAX_BOUNDED_HISTORY_TAIL_GAP_DAYS : MAX_STALE_DAYS
+  if (daysBetween(latest.date, coverageEnd) > maximumLag) {
+    throw new Error(`${providerSymbol} 最新收盤日 ${latest.date} 已超過 ${maximumLag} 天`)
   }
 
   return {
-    ...instrument,
+    providerCurrency,
+    rawQuoteUnit,
     exchangeTimezone,
     bars,
     latestCloseDate: latest.date,
     latestRawClose: latest.rawClose,
+  }
+}
+
+export async function fetchYahooDailyHistory(
+  instrument: MarketInstrument,
+  fetcher: typeof fetch,
+  now = new Date(),
+  endDate?: string,
+  options: { rejectMissingTimestampedClose?: boolean } = {},
+): Promise<MarketInstrumentFetchResult> {
+  const result = await fetchYahooChartHistory(
+    instrument.providerSymbol,
+    instrument.startDate,
+    fetcher,
+    now,
+    endDate,
+    options.rejectMissingTimestampedClose,
+  )
+  if (instrument.instrumentType !== 'FX' && (!result.providerCurrency || result.providerCurrency !== instrument.currency)) {
+    throw new Error(`${instrument.providerSymbol} 幣別為 ${result.providerCurrency || 'UNKNOWN'}，預期為 ${instrument.currency}`)
+  }
+  return {
+    ...instrument,
+    exchangeTimezone: result.exchangeTimezone,
+    bars: result.bars,
+    latestCloseDate: result.latestCloseDate,
+    latestRawClose: result.latestRawClose,
+  }
+}
+
+export async function fetchYahooStrategyHistory(
+  ticker: string,
+  startDate: string,
+  fetcher: typeof fetch,
+  now = new Date(),
+  endDate?: string,
+): Promise<YahooStrategyHistory> {
+  const normalizedTicker = ticker.trim().toUpperCase()
+  if (!normalizedTicker) throw new Error('策略標的代號不得為空')
+  const result = await fetchYahooChartHistory(
+    normalizedTicker,
+    startDate,
+    fetcher,
+    now,
+    endDate,
+    true,
+  )
+  if (!result.rawQuoteUnit) throw new Error(`${normalizedTicker} 行情來源未提供幣別`)
+  const quote = strategyQuoteCurrency(result.rawQuoteUnit)
+  return {
+    ticker: normalizedTicker,
+    currency: quote.currency,
+    quoteUnit: result.rawQuoteUnit,
+    quoteScaleToCurrency: quote.scale,
+    exchangeTimezone: result.exchangeTimezone,
+    bars: result.bars,
+    latestCloseDate: result.latestCloseDate,
+    latestRawClose: result.latestRawClose,
   }
 }

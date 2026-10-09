@@ -24,11 +24,16 @@ export type ResourceRegistration<TSession> = {
   allowedSort: string[]
   defaultPageSize?: number
   maxPageSize?: number
+  paginationSupported?: boolean
   dateSemantics: string
   currencySemantics: string
   dataQualitySemantics: string
   lineageAvailability: string
-  readModel: (context: AiRequestContext<TSession>) => Promise<ResourceReadResult>
+  readModel: (context: AiRequestContext<TSession>, filters: QueryFilters) => Promise<ResourceReadResult>
+  lineageReadModel?: (
+    context: AiRequestContext<TSession>,
+    filters: QueryFilters,
+  ) => Promise<DataLineage>
   applyFilters?: (rows: DataRow[], filters: QueryFilters) => DataRow[]
 }
 
@@ -124,10 +129,12 @@ export class ResourceRegistry<TSession> {
       allowed_filters: registration.allowedFilters,
       allowed_sort_fields: registration.allowedSort,
       pagination: {
-        supported: true,
-        default_page_size: registration.defaultPageSize ?? DEFAULT_PAGE_SIZE,
-        max_page_size: registration.maxPageSize ?? HARD_MAX_PAGE_SIZE,
-        cursor: 'opaque',
+        supported: registration.paginationSupported !== false,
+        default_page_size: registration.paginationSupported === false
+          ? null : registration.defaultPageSize ?? DEFAULT_PAGE_SIZE,
+        max_page_size: registration.paginationSupported === false
+          ? null : registration.maxPageSize ?? HARD_MAX_PAGE_SIZE,
+        cursor: registration.paginationSupported === false ? null : 'opaque',
       },
       date_semantics: registration.dateSemantics,
       currency_semantics: registration.currencySemantics,
@@ -153,9 +160,18 @@ export class ResourceRegistry<TSession> {
       assertOnlyAllowed([query.sort.field], registration.allowedSort, 'INVALID_SORT', 'sort.field')
     }
 
+    if (registration.paginationSupported === false && query.pagination !== undefined) {
+      throw new DataPlatformError(
+        'PAGINATION_NOT_SUPPORTED',
+        `${name} 固定回傳完整結果，不接受 pagination；請使用同一次回應中的 lineage`,
+      )
+    }
+
     const maxPageSize = registration.maxPageSize ?? HARD_MAX_PAGE_SIZE
     const defaultPageSize = registration.defaultPageSize ?? DEFAULT_PAGE_SIZE
-    const limit = query.pagination?.limit ?? defaultPageSize
+    const limit = registration.paginationSupported === false
+      ? HARD_MAX_PAGE_SIZE
+      : query.pagination?.limit ?? defaultPageSize
     if (!Number.isInteger(limit) || limit < 1 || limit > maxPageSize) {
       throw new DataPlatformError(
         'INVALID_PAGE_SIZE',
@@ -164,7 +180,7 @@ export class ResourceRegistry<TSession> {
     }
 
     let offset = 0
-    if (query.pagination?.cursor) {
+    if (registration.paginationSupported !== false && query.pagination?.cursor) {
       const cursor = decodeCursor(query.pagination.cursor)
       if (cursor.resource !== name || cursor.version !== registration.version) {
         throw new DataPlatformError('INVALID_CURSOR', 'pagination.cursor 不屬於此 Resource 版本')
@@ -172,7 +188,7 @@ export class ResourceRegistry<TSession> {
       offset = cursor.offset
     }
 
-    const read = await registration.readModel(context)
+    const read = await registration.readModel(context, filters)
     let rows = registration.applyFilters
       ? registration.applyFilters(read.rows, filters)
       : read.rows
@@ -190,7 +206,7 @@ export class ResourceRegistry<TSession> {
       resource_version: registration.version,
       rows: page,
       returned_row_count: page.length,
-      next_cursor: nextOffset < rows.length
+      next_cursor: registration.paginationSupported !== false && nextOffset < rows.length
         ? encodeCursor({ resource: name, version: registration.version, offset: nextOffset })
         : null,
       data_quality: read.dataQuality,
@@ -201,8 +217,14 @@ export class ResourceRegistry<TSession> {
   async lineage(
     name: string,
     context: AiRequestContext<TSession>,
+    filters: QueryFilters = {},
   ): Promise<DataLineage> {
-    return (await this.get(name).readModel(context)).lineage
+    const registration = this.get(name)
+    assertOnlyAllowed(Object.keys(filters), registration.allowedFilters, 'INVALID_FILTER', 'filters')
+    if (registration.lineageReadModel) {
+      return registration.lineageReadModel(context, filters)
+    }
+    return (await registration.readModel(context, filters)).lineage
   }
 
   private get(name: string): ResourceRegistration<TSession> {

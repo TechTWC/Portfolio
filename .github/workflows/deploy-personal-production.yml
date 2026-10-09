@@ -30,6 +30,7 @@ jobs:
       CLOUDFLARE_ACCESS_APP_DOMAIN: portfolio-analyzer.techtwc.workers.dev
       CLOUDFLARE_ACCESS_TEAM_DOMAIN: https://techtwc.cloudflareaccess.com
       CLOUDFLARE_MARKET_REFRESH_CRON: "30 23 * * 1-5"
+      CLOUDFLARE_STRATEGY_RATE_LIMIT_NAMESPACE_ID: "29001"
 
     steps:
       - uses: actions/checkout@v4

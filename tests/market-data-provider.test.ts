@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchYahooDailyHistory, yahooSymbolForFx } from '../worker/market-data-provider'
+import { fetchYahooDailyHistory, fetchYahooStrategyHistory, yahooSymbolForFx } from '../worker/market-data-provider'
 import type { MarketInstrument } from '../src/lib/market-data-contracts'
 
 const instrument: MarketInstrument = {
@@ -98,6 +98,144 @@ describe('Yahoo Finance daily raw-close adapter', () => {
 
     await expect(fetchYahooDailyHistory(instrument, fetcher, new Date('2026-02-01T00:00:00Z')))
       .rejects.toThrow('已超過 10 天')
+  })
+
+  it('discovers a strategy symbol currency and preserves adjusted close', async () => {
+    const fetcher = vi.fn().mockResolvedValue(response({
+      chart: {
+        result: [{
+          meta: { currency: 'TWD', exchangeTimezoneName: 'Asia/Taipei' },
+          timestamp: [Math.floor(Date.parse('2026-01-02T05:30:00Z') / 1000)],
+          indicators: {
+            quote: [{ close: [100] }],
+            adjclose: [{ adjclose: [99] }],
+          },
+        }],
+      },
+    }))
+
+    const result = await fetchYahooStrategyHistory(
+      '0050.TW',
+      '2026-01-01',
+      fetcher,
+      new Date('2026-01-03T00:00:00Z'),
+    )
+
+    expect(result.ticker).toBe('0050.TW')
+    expect(result.currency).toBe('TWD')
+    expect(result.bars).toEqual([{ date: '2026-01-02', rawClose: 100, adjustedClose: 99 }])
+  })
+
+  it('preserves the GBp quote unit and normalizes pounds only for strategy calculations', async () => {
+    const fetcher = vi.fn().mockResolvedValue(response({
+      chart: { result: [{
+        meta: { currency: 'GBp', exchangeTimezoneName: 'Europe/London' },
+        timestamp: [Math.floor(Date.parse('2026-01-02T16:30:00Z') / 1000)],
+        indicators: {
+          quote: [{ close: [123] }],
+          adjclose: [{ adjclose: [120] }],
+        },
+      }] },
+    }))
+    const history = await fetchYahooStrategyHistory(
+      'VOD.L', '2026-01-01', fetcher,
+      new Date('2026-10-08T00:00:00Z'), '2026-01-02',
+    )
+    expect(history.currency).toBe('GBP')
+    expect(history.quoteUnit).toBe('GBp')
+    expect(history.quoteScaleToCurrency).toBe(0.01)
+    expect(history.bars[0]).toEqual({ date: '2026-01-02', rawClose: 123, adjustedClose: 120 })
+    const requested = new URL(String(fetcher.mock.calls[0][0]))
+    expect(requested.searchParams.get('period2')).toBe(
+      String(Date.parse('2026-01-03T00:00:00Z') / 1000),
+    )
+  })
+
+  it('supports GBX pence aliases without silently accepting unknown subunits', async () => {
+    const quote = (currency: string) => response({ chart: { result: [{
+      meta: { currency, exchangeTimezoneName: 'Europe/London' },
+      timestamp: [Math.floor(Date.parse('2026-01-02T16:30:00Z') / 1000)],
+      indicators: {
+        quote: [{ close: [120] }],
+        adjclose: [{ adjclose: [120] }],
+      },
+    }] } })
+    const fetcher = vi.fn().mockResolvedValueOnce(quote('GBX')).mockResolvedValueOnce(quote('ZAc'))
+    const gbx = await fetchYahooStrategyHistory('VOD.L', '2026-01-01', fetcher,
+      new Date('2026-01-03T00:00:00Z'), '2026-01-02')
+    expect(gbx).toMatchObject({ quoteUnit: 'GBX', currency: 'GBP', quoteScaleToCurrency: 0.01 })
+    await expect(fetchYahooStrategyHistory('VOD.L', '2026-01-01', fetcher,
+      new Date('2026-01-03T00:00:00Z'), '2026-01-02'))
+      .rejects.toThrow('UNSUPPORTED_YAHOO_QUOTE_UNIT')
+  })
+
+  it('limits past strategy/FX Yahoo history to the requested end rather than today', async () => {
+    const payload = {
+      chart: { result: [{
+        meta: { currency: 'USD', exchangeTimezoneName: 'America/New_York' },
+        timestamp: [Math.floor(Date.parse('2026-03-31T20:00:00Z') / 1000)],
+        indicators: {
+          quote: [{ close: [120] }],
+          adjclose: [{ adjclose: [119] }],
+        },
+      }] },
+    }
+    // A Fetch response body is a one-shot stream. Return a fresh response for
+    // each independent security/FX request instead of reusing an already-read
+    // synthetic body.
+    const fetcher = vi.fn().mockImplementation(async () => response(payload))
+    const now = new Date('2026-10-08T00:00:00Z')
+    const historical = await fetchYahooStrategyHistory('AAPL', '2026-01-01',
+      fetcher, now, '2026-04-01')
+    expect(historical.currency).toBe('USD')
+    const fxInstrument: MarketInstrument = {
+      instrumentType: 'FX', ticker: '', currency: 'USD',
+      providerSymbol: 'TWD=X', startDate: '2025-12-20',
+    }
+    await fetchYahooDailyHistory(fxInstrument, fetcher, now, '2026-04-01')
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    for (const [url] of fetcher.mock.calls) {
+      const params = new URL(String(url)).searchParams
+      expect(params.get('period2')).toBe(String(Date.parse('2026-04-02T00:00:00Z') / 1000))
+    }
+  })
+
+  it('rejects a historical tail that ends months before the requested end date', async () => {
+    const fetcher = vi.fn().mockResolvedValue(response({
+      chart: { result: [{
+        meta: { currency: 'TWD', exchangeTimezoneName: 'Asia/Taipei' },
+        timestamp: [Math.floor(Date.parse('2026-01-03T05:30:00Z') / 1000)],
+        indicators: {
+          quote: [{ close: [100] }],
+          adjclose: [{ adjclose: [99] }],
+        },
+      }] },
+    }))
+    await expect(fetchYahooStrategyHistory('0050.TW', '2026-01-01',
+      fetcher, new Date('2026-10-08T00:00:00Z'), '2026-04-01'))
+      .rejects.toThrow('已超過 14 天')
+  })
+
+  it('rejects an in-window timestamp whose raw close is missing instead of rolling DCA forward', async () => {
+    const dates = ['2026-01-02', '2026-02-02', '2026-03-02']
+    const fetcher = vi.fn().mockResolvedValue(response({
+      chart: { result: [{
+        meta: { currency: 'TWD', exchangeTimezoneName: 'Asia/Taipei' },
+        timestamp: dates.map((date) => Math.floor(Date.parse(`${date}T05:30:00Z`) / 1000)),
+        indicators: {
+          quote: [{ close: [100, null, 120] }],
+          adjclose: [{ adjclose: [100, null, 120] }],
+        },
+      }] },
+    }))
+
+    await expect(fetchYahooStrategyHistory(
+      '0050.TW',
+      '2026-01-01',
+      fetcher,
+      new Date('2026-03-03T00:00:00Z'),
+      '2026-03-02',
+    )).rejects.toThrow('MISSING_YAHOO_RAW_CLOSE: 0050.TW 2026-02-02')
   })
 
   it('uses Yahoo quote symbols for TWD conversion', () => {

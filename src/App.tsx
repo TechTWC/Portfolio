@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import FxCostWorkspace from './FxCostWorkspace'
 import HistoricalNavWorkspace from './HistoricalNavWorkspace'
 import PerformanceWorkspace from './PerformanceWorkspace'
+import StrategyComparisonWorkspace from './StrategyComparisonWorkspace'
 import ValuationWorkspace from './ValuationWorkspace'
 import { buildPortfolioAccounting, type PortfolioAccounting } from './lib/accounting'
 import { ApiError, api } from './lib/api'
@@ -19,7 +20,7 @@ import { PARSER_VERSION, parseTransactionFile, type ParseResult } from './lib/pa
 import { subscribePortfolioDataUpdates } from './lib/data-sync'
 import { planTransactionLineage } from './lib/transaction-lineage'
 
-type WorkspaceView = 'overview' | 'accounting' | 'cash' | 'valuation' | 'fx-cost' | 'performance' | 'historical' | 'data'
+type WorkspaceView = 'overview' | 'accounting' | 'cash' | 'valuation' | 'fx-cost' | 'performance' | 'historical' | 'strategy' | 'data'
 
 const WORKSPACE_VIEWS: Array<{ id: WorkspaceView; label: string; eyebrow: string; title: string; description: string }> = [
   { id: 'overview', label: '總覽', eyebrow: 'PORTFOLIO CONTROL CENTER', title: '資產與風險概況', description: '先看資料狀態與需要處理的事項，再進入各分析工作區。' },
@@ -29,6 +30,7 @@ const WORKSPACE_VIEWS: Array<{ id: WorkspaceView; label: string; eyebrow: string
   { id: 'fx-cost', label: '外幣 TWD 成本', eyebrow: 'TWD COST BASIS', title: '外幣 TWD 成本', description: '檢視外幣資金成本、證券 TWD 成本與已實現匯兌損益。' },
   { id: 'performance', label: '證券投入摘要', eyebrow: 'ESTIMATED SECURITY CASH FLOW', title: '證券投入摘要', description: '以買賣紀錄與 ACTIVE 持倉市值整理證券投入、回收、推估損益與資金倍數；目前不計算 Security XIRR。' },
   { id: 'historical', label: '歷史 NAV', eyebrow: 'HISTORICAL ANALYSIS', title: '歷史 NAV', description: '檢視歷史市值曲線、資料品質與受控的 TWR／回撤狀態。' },
+  { id: 'strategy', label: '策略比較', eyebrow: 'STRATEGY COMPARISON', title: '策略績效比較', description: '自訂持股權重，比較 DCA、等本金 Lump Sum 與交易路徑模擬。' },
   { id: 'data', label: '資料管理', eyebrow: 'DATA MANAGEMENT', title: '資料管理', description: '上傳、預覽、啟用與稽核目前 ACTIVE 交易資料。' },
 ]
 
@@ -446,6 +448,7 @@ export default function App() {
         {view === 'fx-cost' && <FxCostWorkspace key={`fx-${workspaceRefreshKey}`} />}
         {view === 'performance' && <PerformanceWorkspace key={`performance-${workspaceRefreshKey}`} />}
         {view === 'historical' && <HistoricalNavWorkspace key={`historical-${workspaceRefreshKey}`} />}
+        {view === 'strategy' && <StrategyComparisonWorkspace key={`strategy-${workspaceRefreshKey}`} bootstrap={bootstrap} />}
 
         {view === 'data' && <>
         <section className="panel ai-access-panel" id="ai-access">
