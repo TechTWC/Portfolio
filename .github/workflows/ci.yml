@@ -23,6 +23,8 @@ jobs:
       - name: Audit all dependencies
         run: npm run audit:all
       - run: npm test
+      - name: Offline D1 recovery drill (synthetic SQLite only)
+        run: python3 -m unittest discover -s tests/recovery -p 'test_*.py' -v
       - name: Typecheck
         shell: bash
         run: |
